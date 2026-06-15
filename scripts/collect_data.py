@@ -1,6 +1,6 @@
 """
 PF Daily Market Intelligence — 데이터 수집 모듈
-AUTO 수집: ECOS API(금리/환율), pykrx(주가지수), Naver(뉴스)
+AUTO 수집: ECOS API(금리/환율), FinanceDataReader(주가지수), Naver(뉴스)
 MANUAL 관리: manual_data/credit_ratings.csv, manual_data/pf_rates.csv
 """
 import os
@@ -53,11 +53,6 @@ PF_KEYWORDS = [
     "ABCP 건설", "ABSTB", "PF 차환", "미분양 PF", "PF 부실",
 ]
 
-INDEX_TICKERS = {
-    "KOSPI":  "1001",
-    "KOSDAQ": "2001",
-    "KRX건설": "1028",  # KOSPI 건설업 업종지수
-}
 
 
 # ─── ECOS API ─────────────────────────────────────────────────────
@@ -120,12 +115,24 @@ def collect_funding_market():
 # ─── 환율 ─────────────────────────────────────────────────────────
 
 def collect_usd_krw():
-    # 1차: ECOS
+    # 1차: ECOS API
     r = fetch_ecos("731Y001", "D", "0000001", "USD/KRW")
     if r.get("value"):
         return r
 
-    # 2차: Naver Finance 스크래핑 (fallback)
+    # 2차: FinanceDataReader (Yahoo Finance 경유)
+    try:
+        import FinanceDataReader as fdr
+        start, end = _date_range()
+        df = fdr.DataReader("USD/KRW", start, end)
+        if df is not None and not df.empty:
+            val = float(df.iloc[-1]["Close"])
+            return {"value": round(val, 2), "date": df.index[-1].strftime("%Y-%m-%d"),
+                    "label": "USD/KRW", "source": "FinanceDataReader/Yahoo", "type": "auto"}
+    except Exception:
+        pass
+
+    # 3차: Naver Finance 스크래핑
     try:
         from bs4 import BeautifulSoup
         resp = requests.get(
@@ -143,84 +150,114 @@ def collect_usd_krw():
         pass
 
     return {"value": None, "date": None, "label": "USD/KRW",
-            "source": "N/A", "type": "auto", "error": "수집 실패 — ECOS·Naver 모두 실패"}
+            "source": "N/A", "type": "auto", "error": "수집 실패 — ECOS·FDR·Naver 모두 실패"}
 
 
-# ─── pykrx 주가/지수 ──────────────────────────────────────────────
+# ─── FinanceDataReader 주가/지수 (로그인 불필요) ──────────────────
 
-def _latest_biz_date():
-    d = datetime.date.today() - datetime.timedelta(days=1)
-    while d.weekday() >= 5:
-        d -= datetime.timedelta(days=1)
-    return d.strftime("%Y%m%d")
+def _date_range():
+    end   = datetime.date.today() - datetime.timedelta(days=1)
+    # 주말이면 금요일로
+    while end.weekday() >= 5:
+        end -= datetime.timedelta(days=1)
+    start = end - datetime.timedelta(days=7)
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
-def _week_ago():
-    return (datetime.date.today() - datetime.timedelta(days=10)).strftime("%Y%m%d")
+def _parse_fdr(df, label, source):
+    """FDR DataFrame → 표준 결과 dict"""
+    if df is None or df.empty:
+        return {"value": None, "source": source, "type": "auto", "error": "데이터 없음"}
+    latest = df.iloc[-1]
+    prev   = df.iloc[-2] if len(df) >= 2 else None
+    close  = float(latest["Close"])
+    chg    = round(close - float(prev["Close"]), 2) if prev is not None else None
+    pct    = round(chg / float(prev["Close"]) * 100, 2) if chg is not None and float(prev["Close"]) else None
+    return {
+        "value": close, "change": chg, "change_pct": pct,
+        "date":  df.index[-1].strftime("%Y-%m-%d"),
+        "label": label, "source": source, "type": "auto",
+    }
+
+
+# FDR 지수 심볼 (로그인 없이 사용 가능)
+# KRX건설: 네이버 금융 섹터 코드 (FDR 미지원 → 별도 scraping)
+INDEX_SYMBOLS = {
+    "KOSPI":  "KS11",   # KOSPI 종합
+    "KOSDAQ": "KQ11",   # KOSDAQ 종합
+}
+
+
+def calc_construction_avg(stock_prices):
+    """건설사 주가 평균 등락률 계산 (KRX건설 지수 대용)"""
+    pcts = [
+        info["change_pct"]
+        for info in stock_prices.values()
+        if info.get("change_pct") is not None and info.get("source") != "비상장"
+    ]
+    if not pcts:
+        return {"value": None, "source": "건설사 평균", "type": "auto_derived",
+                "error": "주가 데이터 없음"}
+    avg = round(sum(pcts) / len(pcts), 2)
+    return {
+        "value": avg,
+        "change": avg,
+        "change_pct": avg,
+        "date":  datetime.date.today().isoformat(),
+        "label": "건설사 평균등락",
+        "source": f"건설사 {len(pcts)}개 평균 (FDR)",
+        "type":  "auto_derived",
+        "note":  "KRX건설업지수 대용 — JS렌더링으로 직접수집 불가",
+    }
 
 
 def collect_market_indices():
     result = {}
     try:
-        from pykrx import stock as krx
-        end_d, start_d = _latest_biz_date(), _week_ago()
-        for name, ticker in INDEX_TICKERS.items():
+        import FinanceDataReader as fdr
+        start, end = _date_range()
+        for name, symbol in INDEX_SYMBOLS.items():
             try:
-                df = krx.get_index_ohlcv_by_date(start_d, end_d, ticker)
-                if df is None or df.empty:
-                    result[name] = {"value": None, "source": "KRX/pykrx",
-                                    "type": "auto", "error": "데이터 없음"}
-                    continue
-                latest = df.iloc[-1]
-                prev   = df.iloc[-2] if len(df) >= 2 else None
-                close  = float(latest["종가"])
-                chg    = round(close - float(prev["종가"]), 2) if prev is not None else None
-                pct    = round(chg / float(prev["종가"]) * 100, 2) if chg is not None and float(prev["종가"]) else None
-                result[name] = {
-                    "value": close, "change": chg, "change_pct": pct,
-                    "date":  df.index[-1].strftime("%Y-%m-%d"),
-                    "label": name, "source": "KRX/pykrx", "type": "auto",
-                }
+                df = fdr.DataReader(symbol, start, end)
+                result[name] = _parse_fdr(df, name, "FinanceDataReader/KRX")
             except Exception as e:
-                result[name] = {"value": None, "source": "KRX/pykrx",
+                result[name] = {"value": None, "source": "FinanceDataReader",
                                 "type": "auto", "error": str(e)}
     except ImportError:
-        for name in INDEX_TICKERS:
-            result[name] = {"value": None, "source": "pykrx",
-                            "type": "auto", "error": "pykrx 미설치 — pip install pykrx"}
+        for name in INDEX_SYMBOLS:
+            result[name] = {"value": None, "source": "FinanceDataReader",
+                            "type": "auto", "error": "미설치 — pip install finance-datareader"}
+
+    # KRX건설 지수: JS렌더링으로 직접 수집 불가 → 건설사 평균 등락률로 대체
+    # (stock_prices 수집 후 collect_all()에서 채워짐, 여기서는 placeholder)
+    result["KRX건설"] = {"value": None, "source": "건설사평균(계산예정)", "type": "auto_derived"}
     return result
 
 
 def collect_stock_prices():
     prices = {}
     try:
-        from pykrx import stock as krx
-        end_d, start_d = _latest_biz_date(), _week_ago()
+        import FinanceDataReader as fdr
+        start, end = _date_range()
         for company, ticker in LISTED_STOCKS.items():
             try:
-                df = krx.get_market_ohlcv_by_date(start_d, end_d, ticker)
-                if df is None or df.empty:
-                    prices[company] = {"ticker": ticker, "value": None,
-                                       "source": "KRX/pykrx", "type": "auto", "error": "데이터 없음"}
-                    continue
-                latest = df.iloc[-1]
-                prev   = df.iloc[-2] if len(df) >= 2 else None
-                close  = int(latest["종가"])
-                chg    = int(latest["종가"] - prev["종가"]) if prev is not None else None
-                pct    = round(chg / int(prev["종가"]) * 100, 2) if chg is not None and int(prev["종가"]) else None
-                prices[company] = {
-                    "ticker": ticker, "value": close,
-                    "change": chg,    "change_pct": pct,
-                    "date":   df.index[-1].strftime("%Y-%m-%d"),
-                    "source": "KRX/pykrx", "type": "auto",
-                }
+                df = fdr.DataReader(ticker, start, end)
+                item = _parse_fdr(df, company, "FinanceDataReader/KRX")
+                item["ticker"] = ticker
+                # 주가는 정수로 변환
+                if item.get("value"):
+                    item["value"]  = int(item["value"])
+                if item.get("change"):
+                    item["change"] = int(item["change"])
+                prices[company] = item
             except Exception as e:
                 prices[company] = {"ticker": ticker, "value": None,
-                                   "source": "KRX/pykrx", "type": "auto", "error": str(e)}
+                                   "source": "FinanceDataReader", "type": "auto", "error": str(e)}
     except ImportError:
         for company, ticker in LISTED_STOCKS.items():
             prices[company] = {"ticker": ticker, "value": None,
-                               "source": "pykrx", "type": "auto", "error": "pykrx 미설치"}
+                               "source": "FinanceDataReader", "type": "auto",
+                               "error": "미설치 — pip install finance-datareader"}
 
     for company in NON_LISTED:
         prices[company] = {"ticker": None, "value": None,
@@ -359,11 +396,14 @@ def collect_all():
     print("[2/6] 환율 수집 중...")
     usd_krw = collect_usd_krw()
 
-    print("[3/6] 주가지수 수집 중 (pykrx)...")
+    print("[3/6] 주가지수 수집 중 (FinanceDataReader)...")
     indices = collect_market_indices()
 
-    print("[4/6] 건설사 주가 수집 중 (pykrx)...")
+    print("[4/6] 건설사 주가 수집 중 (FinanceDataReader)...")
     stocks = collect_stock_prices()
+
+    # KRX건설 지수 대용: 건설사 평균 등락률
+    indices["KRX건설"] = calc_construction_avg(stocks)
 
     print("[5/6] PF·건설 뉴스 수집 중 (Naver)...")
     pf_news      = collect_pf_news()

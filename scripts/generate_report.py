@@ -155,19 +155,30 @@ def html_exec_summary(data):
 
 def _kpi_card(label, item):
     val   = item.get("value")
-    is_fx = "KRW" in label
-    val_s = f"{val:,.1f}" if (val and is_fx) else (f"{val:,.2f}" if val else "N/A")
+    is_fx       = "KRW" in label
+    is_cons_avg = "건설" in label  # 건설사 평균등락 → % 표시
+    if val is None:
+        val_s = "N/A"
+    elif is_cons_avg:
+        val_s = f"{val:+.2f}%"   # 건설사 평균등락률
+    elif is_fx:
+        val_s = f"{val:,.1f}"
+    else:
+        val_s = f"{val:,.2f}"
     chg_s = chg_html(item.get("change"), item.get("change_pct"))
     clr   = "#9ca3af" if val is None else "#0f2744"
     err   = item.get("error", "")
+    note  = item.get("note", "")
+    sub   = note[:30] if note else (err[:35] if err else "")
+    sub_color = "#9ca3af" if note else "#ef4444"
     return f"""
 <td style="width:25%;padding:6px;">
   <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 10px;text-align:center;background:#fafafa;">
     <div style="font-size:11px;color:#6b7280;font-weight:600;margin-bottom:4px;">{label}</div>
     <div style="font-size:19px;font-weight:800;color:{clr};margin-bottom:3px;">{val_s}</div>
-    <div style="font-size:12px;">{chg_s}</div>
+    <div style="font-size:12px;">{chg_s if not is_cons_avg else ""}</div>
     <div style="margin-top:6px;">{badge(item.get('type','auto'))}</div>
-    {"<div style='font-size:10px;color:#ef4444;margin-top:3px;'>"+err[:40]+"</div>" if err else ""}
+    {"<div style='font-size:10px;color:"+sub_color+";margin-top:3px;'>"+sub+"</div>" if sub else ""}
   </div>
 </td>"""
 

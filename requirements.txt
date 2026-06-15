@@ -1,5 +1,5 @@
 requests>=2.31.0
-pykrx>=1.0.45
+finance-datareader>=0.9.50
 beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
 lxml>=4.9.0
