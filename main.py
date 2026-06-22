@@ -6,6 +6,7 @@ PF Daily Market Intelligence — 실행 진입점
   python main.py --no-send          # 이메일 발송 생략
   python main.py --no-pdf           # PDF 변환 생략
   python main.py --only-report      # 기존 JSON으로 HTML/PDF만 재생성
+  python main.py --diagnose         # 데이터 소스 연결 진단만 실행 (발송 없음)
 """
 import sys
 import argparse
@@ -19,7 +20,13 @@ def run():
     parser.add_argument("--no-send",     action="store_true", help="이메일 발송 생략")
     parser.add_argument("--no-pdf",      action="store_true", help="PDF 변환 생략")
     parser.add_argument("--only-report", action="store_true", help="데이터 재수집 없이 HTML/PDF만 재생성")
+    parser.add_argument("--diagnose",    action="store_true", help="데이터 소스 연결 진단 (발송 없음)")
     args = parser.parse_args()
+
+    if args.diagnose:
+        from scripts.diagnose_sources import run_diagnose
+        fail_count = run_diagnose()
+        sys.exit(1 if fail_count > 0 else 0)
 
     from scripts.collect_data    import collect_all
     from scripts.generate_report import generate_report

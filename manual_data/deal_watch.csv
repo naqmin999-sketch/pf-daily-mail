@@ -1,4 +1,4 @@
-type,party,borrower,guarantee_type,rate_pct,maturity,project_name,amount_bn,remark,as_of_date
-도시정비,당사,,,,,,,입력 필요,2026-06-01
-PF,당사,,,,,,,입력 필요,2026-06-01
-브릿지론,타사,,,,,,,입력 필요,2026-06-01
+type,party,borrower,guarantee_type,rate_pct,maturity,project_name,amount_bn,remark,as_of_date,source
+도시정비,당사,,,,,,,입력 필요,2026-06-01,
+PF,당사,,,,,,,입력 필요,2026-06-01,
+브릿지론,타사,,,,,,,입력 필요,2026-06-01,

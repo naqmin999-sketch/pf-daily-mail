@@ -1,9 +1,10 @@
 """
 PF Daily Market Intelligence — 데이터 수집 모듈
-AUTO  : ECOS API (금리/환율), Naver 뉴스 API
-MANUAL: manual_data/*.csv (CP금리, COFIX, Deal Watch, 신용등급, PF금리)
+AUTO  : ECOS API (금리/환율), Naver 뉴스 API, 은행연합회 COFIX
+MANUAL: manual_data/*.csv (CP금리, Deal Watch, 신용등급, PF금리)
 """
 import os
+import re
 import json
 import csv
 import datetime
@@ -285,7 +286,9 @@ def collect_pf_news():
                 seen.add(art["title"])
                 all_news.append(art)
         time.sleep(0.2)
-    return all_news[:12]
+        if len(all_news) >= 5:
+            break
+    return all_news[:5]
 
 
 def collect_policy_news():
@@ -296,7 +299,74 @@ def collect_policy_news():
                 seen.add(art["title"])
                 all_news.append(art)
         time.sleep(0.2)
-    return all_news[:12]
+        if len(all_news) >= 5:
+            break
+    return all_news[:5]
+
+
+# ─── 은행연합회 COFIX 자동수집 ───────────────────────────────────
+
+def collect_cofix_from_kfb():
+    """
+    은행연합회 COFIX 최신 공시 크롤링 (로그인 없음, 공개 공시 페이지 파싱).
+    성공 시 dict 반환, 실패 시 None 반환 → collect_all()에서 CSV fallback.
+    """
+    from bs4 import BeautifulSoup
+    url = "https://portal.kfb.or.kr/cofix/cofix_list.php"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+        "Referer": "https://portal.kfb.or.kr/",
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        table = soup.find("table")
+        if not table:
+            return None
+
+        data_rows = [r for r in table.find_all("tr") if r.find("td")]
+        if not data_rows:
+            return None
+
+        cells = [td.get_text(strip=True) for td in data_rows[0].find_all("td")]
+        if len(cells) < 4:
+            return None
+
+        m = re.search(r"(\d{4})년\s*(\d{1,2})월", cells[0])
+        if not m:
+            return None
+        ym = f"{m.group(1)}-{int(m.group(2)):02d}"
+
+        def _f(s):
+            s = s.replace(",", "").replace("%", "").strip()
+            try:
+                return float(s) if s else None
+            except ValueError:
+                return None
+
+        result = {
+            "ym":               ym,
+            "new_all_rate":     _f(cells[1]),
+            "balance_rate":     _f(cells[2]),
+            "new_balance_rate": _f(cells[3]),
+            "note":             "",
+            "source":           "은행연합회 COFIX 공시",
+            "type":             "auto",
+        }
+        # 값이 하나도 없으면 파싱 실패로 간주
+        if all(result.get(k) is None for k in ("new_all_rate", "balance_rate", "new_balance_rate")):
+            return None
+        return result
+    except Exception:
+        return None
 
 
 # ─── ECOS 항목 조회 유틸 (수동 실행) ─────────────────────────────
@@ -335,12 +405,23 @@ def collect_all():
     print("[5/7] 부동산 정책 뉴스 수집 중 (Naver)...")
     policy_news = collect_policy_news()
 
-    print("[6/7] Manual CSV 로드 중...")
+    print("[6/7] Manual CSV 로드 + COFIX 자동수집 중...")
     pf_rates       = load_pf_rates()
     cp_rates       = load_cp_rates()
-    cofix          = load_cofix()
     deal_watch     = load_deal_watch()
     company_credit = load_credit_ratings()
+
+    # COFIX: 은행연합회 자동수집 → 실패 시 CSV fallback
+    cofix_auto = collect_cofix_from_kfb()
+    cofix_csv  = load_cofix()
+    if cofix_auto:
+        csv_other = [r for r in cofix_csv if r.get("ym") != cofix_auto["ym"]]
+        cofix = [cofix_auto] + csv_other
+        print(f"  → COFIX 자동수집 성공: {cofix_auto['ym']}"
+              f" (신규취급액 {cofix_auto.get('new_all_rate')}%)")
+    else:
+        cofix = cofix_csv
+        print("  → COFIX 자동수집 실패 — CSV fallback 사용")
 
     data = {
         "collected_at":   datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),

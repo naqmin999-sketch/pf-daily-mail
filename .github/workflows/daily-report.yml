@@ -5,7 +5,16 @@ name: PF Daily Market Intelligence
 on:
   schedule:
     - cron: '0 23 * * *'   # 매일 UTC 23:00 = KST 08:00
-  workflow_dispatch:         # GitHub UI에서 수동 실행 가능
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드 (send: 전체 파이프라인 / diagnose: 연결 진단만)'
+        required: false
+        default: 'send'
+        type: choice
+        options:
+          - send
+          - diagnose
 
 jobs:
   daily-report:
@@ -46,4 +55,9 @@ jobs:
         run: playwright install --with-deps chromium
 
       - name: 리포트 생성 및 이메일 발송
-        run: python main.py
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "diagnose" ]; then
+            python main.py --diagnose
+          else
+            python main.py
+          fi
