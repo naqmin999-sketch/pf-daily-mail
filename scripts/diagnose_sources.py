@@ -210,6 +210,7 @@ def _age_str(path):
 
 
 def check_files():
+    # diagnose 모드는 파일을 생성하지 않으므로 생성 파일 부재는 WARN 처리
     print("\n[D] 생성 파일 (JSON / HTML / PDF)")
     print("-" * 56)
 
@@ -217,10 +218,10 @@ def check_files():
     if json_path.exists():
         _log(OK, "data/latest_report.json", f"존재 ({_age_str(json_path)} 생성)")
     else:
-        _log(FAIL, "data/latest_report.json", "없음 — python main.py --no-send 로 먼저 실행")
+        _log(WARN, "data/latest_report.json", "없음 (send 모드 실행 전 정상)")
 
     if not REPORT_DIR.exists():
-        _log(FAIL, "reports/ 폴더", "없음")
+        _log(WARN, "reports/ 폴더", "없음 (send 모드 실행 전 정상)")
         return
 
     today = datetime.date.today().isoformat()
@@ -233,7 +234,7 @@ def check_files():
             if recents:
                 _log(WARN, label, f"오늘 파일 없음 — 최근: {recents[0].name} ({_age_str(recents[0])})")
             else:
-                _log(FAIL, label, "없음")
+                _log(WARN, label, "없음 (send 모드 실행 전 정상)")
 
 
 # ── E. 이메일 설정 확인 ────────────────────────────────────────────
