@@ -1,6 +1,17 @@
+# 환경변수 — 절대 커밋 금지
 .env
+
+# 자동 생성 파일
 data/latest_report.json
 reports/
+logs/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
+
+# IDE
+.vscode/
+.idea/

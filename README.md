@@ -1,168 +1,162 @@
 # PF Daily Market Intelligence
 
-국내 건설사 금융팀을 위한 일일 PF 시황 HTML 이메일 리포트 자동 생성/발송 시스템.
+DL이앤씨 금융팀용 일일 PF/조달금융 브리핑 리포트 자동 생성·발송 시스템.  
+매일 오전 8시 KST에 GitHub Actions가 데이터를 수집하고 PDF 리포트를 이메일로 발송합니다.
+
+---
+
+## 리포트 구성
+
+| 섹션 | 내용 |
+|------|------|
+| ① Executive Summary | 기준금리, 조달금리, 스프레드, 정책 뉴스 요약 |
+| ② Funding Market | 채권금리 / 유동화·CP금리 / COFIX / 30일 추이 차트 |
+| ③ 금융시장·정책 동향 | PF/조달 뉴스 12건 + 부동산 정책 뉴스 12건 |
+| ④ Deal Watch | 도시정비·PF·브릿지론 조달 사례 (수동 입력) |
+| ⑤ 신용등급 현황 | 건설사 9개사 등급·전망 |
+
+---
 
 ## 파일 구조
 
 ```
 pf-daily-mail/
-├── main.py                      # 실행 진입점 (수집 → 생성 → 발송)
+├── main.py                       # 실행 진입점
 ├── requirements.txt
-├── .env.example                 # 환경변수 템플릿
+├── run_daily.bat                 # 로컬 Windows 수동 실행용
+├── .env                          # API키·이메일 설정 (Git 제외)
+├── .github/
+│   └── workflows/
+│       └── daily-report.yml     # GitHub Actions 자동화
 ├── scripts/
-│   ├── collect_data.py          # 데이터 수집 (ECOS, pykrx, Naver)
-│   ├── generate_report.py       # HTML 리포트 생성
-│   └── send_email.py            # SMTP 이메일 발송
-├── data/
-│   └── latest_report.json       # 최신 수집 결과 (자동 생성)
-├── reports/
-│   └── YYYY-MM-DD_report.html   # 일별 리포트 (자동 생성)
-└── manual_data/
-    ├── credit_ratings.csv        # 건설사 신용등급 (수동 관리)
-    └── pf_rates.csv              # PF 시장금리 (수동 관리)
+│   ├── collect_data.py           # 데이터 수집 (ECOS, Naver)
+│   ├── generate_report.py        # HTML 리포트 생성
+│   ├── generate_pdf.py           # HTML → PDF 변환 (Playwright)
+│   └── send_email.py             # SMTP 이메일 발송
+├── manual_data/
+│   ├── credit_ratings.csv        # 건설사 신용등급 (수동 관리)
+│   ├── pf_rates.csv              # PF 시장금리 (수동 관리)
+│   ├── cp_rates.csv              # CP 등급별 금리 (수동 관리)
+│   ├── cofix.csv                 # COFIX 월별 (수동 관리)
+│   └── deal_watch.csv            # 조달 사례 Watch (수동 관리)
+├── data/                         # 자동 생성 (Git 제외)
+└── reports/                      # 자동 생성 (Git 제외)
 ```
 
-## 데이터 소스 구분
+---
 
-| 구분 | 항목 | 소스 | 표시 |
-|------|------|------|------|
-| 자동 | 기준금리, CD/CP, 국고채, 회사채 AA- | 한국은행 ECOS API | `[AUTO]` |
-| 자동 | KOSPI, KOSDAQ, KRX건설, 건설사 주가 | KRX/pykrx | `[AUTO]` |
-| 자동 | USD/KRW | ECOS → Naver 스크래핑 fallback | `[AUTO]` |
-| 자동 | PF/건설 뉴스 | Naver 뉴스 API → 스크래핑 fallback | `[AUTO]` |
-| 자동계산 | AA- 스프레드 | 회사채 - 국고채 | `[계산]` |
-| 수동 | 신용등급, 전망 | manual_data/credit_ratings.csv | `[MANUAL]` |
-| 수동 | PF ABCP/ABSTB/브릿지론 금리 | manual_data/pf_rates.csv | `[MANUAL]` |
+## 데이터 소스
 
-## 설치
+| 배지 | 항목 | 소스 |
+|------|------|------|
+| `AUTO` | 기준금리, CD/CP 91일, 국고채 3Y/10Y, 회사채 AA- | 한국은행 ECOS API |
+| `AUTO` | 회사채 A+/A0/A- (item_code 미확인 → N/A 가능) | 한국은행 ECOS API |
+| `AUTO` | USD/KRW | ECOS → FDR/Yahoo → Naver 순차 fallback |
+| `AUTO` | PF/조달 뉴스, 부동산 정책 뉴스 | Naver 뉴스 API |
+| `계산` | AA- 스프레드, A- 스프레드 | 회사채 − 국고채 3Y |
+| `MANUAL` | CP 등급별 금리 | manual_data/cp_rates.csv |
+| `MANUAL` | COFIX | manual_data/cofix.csv |
+| `MANUAL` | PF 시장금리 | manual_data/pf_rates.csv |
+| `MANUAL` | Deal Watch | manual_data/deal_watch.csv |
+| `MANUAL` | 신용등급 | manual_data/credit_ratings.csv |
+
+---
+
+## 로컬 설치 및 실행
 
 ```bash
-cd pf-daily-mail
 pip install -r requirements.txt
+playwright install chromium
 ```
 
-## 설정
-
-```bash
-# .env.example 을 복사하여 실제 값 입력
-copy .env.example .env
-```
-
-`.env` 필수 항목:
+`.env` 파일 생성 (`.env` 는 Git에 포함되지 않습니다):
 
 ```env
-# 한국은행 ECOS API 키 (무료)
-# 발급: https://ecos.bok.or.kr/api/
-ECOS_API_KEY=your_key_here
-
-# 네이버 개발자 API (뉴스 검색, 무료)
-# 발급: https://developers.naver.com/
+ECOS_API_KEY=your_key
 NAVER_CLIENT_ID=your_id
 NAVER_CLIENT_SECRET=your_secret
-
-# 이메일 발송 (Gmail 앱 비밀번호)
 EMAIL_SENDER=your@gmail.com
 EMAIL_PASSWORD=xxxx xxxx xxxx xxxx
-EMAIL_RECIPIENTS=team@company.com
+EMAIL_RECIPIENTS=team@company.com,other@company.com
+EMAIL_SMTP_HOST=smtp.gmail.com
+EMAIL_SMTP_PORT=587
 ```
-
-> **Gmail 앱 비밀번호**: Google 계정 → 보안 → 2단계 인증 → 앱 비밀번호
-
-## 실행
 
 ```bash
-# 전체 파이프라인 (수집 → HTML 생성 → 이메일 발송)
-python main.py
-
-# 이메일 발송 없이 리포트만 생성 (테스트용)
+# 테스트 (이메일 발송 없이 HTML/PDF 생성)
 python main.py --no-send
 
-# 기존 수집 데이터로 HTML만 재생성
-python main.py --only-report
+# 전체 실행 (수집 → HTML → PDF → 발송)
+python main.py
 
-# 개별 실행
-python scripts/collect_data.py
-python scripts/generate_report.py
-python scripts/send_email.py
+# 기존 데이터로 HTML/PDF만 재생성
+python main.py --only-report
 ```
 
-생성된 리포트: `reports/YYYY-MM-DD_report.html` (브라우저로 바로 열 수 있음)
+---
+
+## GitHub Actions 자동화
+
+### 동작 방식
+
+```
+매일 UTC 23:00 (= KST 08:00)
+  → GitHub Actions 실행
+  → 데이터 수집 (ECOS, Naver)
+  → HTML 생성
+  → PDF 변환 (Playwright Chromium)
+  → 이메일 발송 (PDF 첨부)
+  → 완료
+```
+
+수동 실행: GitHub 저장소 → Actions 탭 → `PF Daily Market Intelligence` → `Run workflow`
+
+### GitHub Secrets 설정
+
+저장소 → **Settings → Secrets and variables → Actions → New repository secret**
+
+| Secret 이름 | 내용 | 필수 |
+|-------------|------|------|
+| `ECOS_API_KEY` | 한국은행 ECOS API 키 | ✅ |
+| `NAVER_CLIENT_ID` | Naver 개발자 Client ID | ✅ |
+| `NAVER_CLIENT_SECRET` | Naver 개발자 Secret | ✅ |
+| `EMAIL_SENDER` | 발신자 Gmail 주소 | ✅ |
+| `EMAIL_PASSWORD` | Gmail 앱 비밀번호 (16자리) | ✅ |
+| `EMAIL_RECIPIENTS` | 수신자 목록 (쉼표 구분) | ✅ |
+| `EMAIL_SMTP_HOST` | SMTP 서버 (기본: smtp.gmail.com) | ✅ |
+| `EMAIL_SMTP_PORT` | SMTP 포트 (기본: 587) | ✅ |
+| `DATA_GO_KR_API_KEY` | 공공데이터포털 API 키 (향후 사용) | — |
+
+> **Gmail 앱 비밀번호 발급**: Google 계정 → 보안 → 2단계 인증 → 앱 비밀번호
+
+---
 
 ## 수동 데이터 관리
 
-### 신용등급 (`manual_data/credit_ratings.csv`)
+수동 CSV 파일은 정기적으로 직접 업데이트합니다.
 
-```csv
-company,ticker,listed,rating,rating_date,outlook,rater,note
-태영건설,009410,TRUE,BB,2026-06-01,부정적,한국기업평가,워크아웃 진행
+### `manual_data/cp_rates.csv`
+CP 등급별 3개월/1년 금리. 주 1회 업데이트 권장.
+
+### `manual_data/cofix.csv`
+COFIX 신규취급액·잔액·신잔액 기준. 은행연합회 공시 기준 월 1회 업데이트.
+
+### `manual_data/pf_rates.csv`
+PF ABCP/ABSTB/브릿지론/본PF 시장금리. 금융투자협회 채권정보센터 참고.
+
+### `manual_data/deal_watch.csv`
+당사/타사 도시정비·PF·브릿지론 조달 사례.  
+컬럼: `type / party / borrower / guarantee_type / rate_pct / maturity / project_name / amount_bn / remark / as_of_date`
+
+### `manual_data/credit_ratings.csv`
+건설사 9개사 신용등급. 분기 1회 확인 업데이트 권장.
+
+---
+
+## ECOS item_code 확인 (A+/A0/A- 코드 미확인 시)
+
+```bash
+python -c "from scripts.collect_data import discover_ecos_items; discover_ecos_items()"
 ```
 
-- `rating_date`: 등급 발표일 (분기마다 확인 권장)
-- `outlook`: 안정적 / 긍정적 / 부정적 / 크레딧워치 긍정 / 크레딧워치 부정
-
-### PF 금리 (`manual_data/pf_rates.csv`)
-
-```csv
-category,subcategory,rate_pct,as_of_date,source,note
-PF ABCP,우량사업장,4.50,2026-06-01,수기입력,금투협 채권정보센터 참고
-```
-
-- 매주 1회 시장 체크 후 업데이트 권장
-- 금융투자협회 채권정보센터 (kofiabond.or.kr) 참고
-
-## 자동화 설정
-
-### Windows 작업 스케줄러 (매일 08:00 실행)
-
-관리자 권한 PowerShell에서:
-
-```powershell
-$action  = New-ScheduledTaskAction -Execute "python" `
-             -Argument "C:\Users\naqmi\pf-daily-mail\main.py" `
-             -WorkingDirectory "C:\Users\naqmi\pf-daily-mail"
-$trigger = New-ScheduledTaskTrigger -Daily -At "08:00"
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
-Register-ScheduledTask -TaskName "PF-Daily-Report" `
-  -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest
-```
-
-### GitHub Actions (`.github/workflows/daily_report.yml`)
-
-```yaml
-name: PF Daily Report
-on:
-  schedule:
-    - cron: '0 23 * * 0-4'  # UTC 23:00 = KST 08:00 (평일)
-  workflow_dispatch:
-
-jobs:
-  report:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: pip install -r requirements.txt
-      - run: python main.py
-        env:
-          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
-          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
-          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
-```
-
-## 개발 로드맵
-
-- **1단계 (MVP)**: ECOS + pykrx + Naver + manual CSV → HTML 리포트 ✅
-- **2단계**: HTML 디자인 고도화, 섹션별 차트 추가
-- **3단계**: SMTP 발송 안정화, 발송 이력 로깅
-- **4단계**: Windows 스케줄러 또는 GitHub Actions 자동화
-
-## 주의사항
-
-- API 키 미설정 시 자동수집 항목은 `N/A`로 표시됨 (리포트 생성은 정상 동작)
-- pykrx 미설치 시 주가/지수 항목 `N/A` (ECOS 금리는 독립적으로 동작)
-- 장 개장 전(08:00) 실행 시 전일 종가 기준으로 표시됨
-- 네이버 스크래핑은 HTML 구조 변경 시 중단될 수 있음 → Naver API 키 권장
+출력된 코드를 `scripts/collect_data.py`의 `ECOS_ITEMS` 딕셔너리에 업데이트.
