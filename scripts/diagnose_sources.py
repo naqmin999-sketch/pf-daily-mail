@@ -61,10 +61,14 @@ def check_ecos():
         r   = fetch_ecos(stat, cycle, item_code, label)
         val = r.get("value")
         err = r.get("error", "")
+        _transient = ("timed out" in err or "Max retries" in err
+                      or "ConnectionPool" in err or "ConnectTimeout" in err)
         if val is not None:
             _log(OK, f"ECOS {label}", f"{val} / {r.get('date', '')}")
         elif "응답 없음" in err or "item_code 미확인" in err:
             _log(WARN, f"ECOS {label}", "item_code 미확인 — 응답 없음 (N/A 표시)")
+        elif _transient:
+            _log(WARN, f"ECOS {label}", "일시적 네트워크 오류 — 재실행 또는 send 모드에서 재확인")
         else:
             _log(FAIL, f"ECOS {label}", err or "수집 실패")
 
