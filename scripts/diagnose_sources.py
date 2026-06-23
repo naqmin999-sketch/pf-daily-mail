@@ -146,26 +146,27 @@ _CSV_SPECS = {
 
 
 def check_cofix_auto():
-    """은행연합회 COFIX 자동수집 테스트"""
-    print("\n[C-AUTO] COFIX 자동수집 (은행연합회 공시 크롤링)")
+    """우리은행 COFIX 고시 자동수집 테스트 (Playwright)"""
+    print("\n[C-AUTO] COFIX 자동수집 (우리은행 COFIX 고시)")
     print("-" * 56)
 
     import sys
     sys.path.insert(0, str(BASE_DIR))
-    from scripts.collect_data import collect_cofix_from_kfb
+    from scripts.collect_data import collect_cofix_from_woori
 
-    result = collect_cofix_from_kfb()
+    result = collect_cofix_from_woori()
     if result and (result.get("new_all_rate") is not None or
                    result.get("balance_rate") is not None):
-        _log(OK, "COFIX 자동수집 (은행연합회)",
+        _log(OK, "COFIX 자동수집 (우리은행)",
              f"성공 — {result['ym']} / 신규취급액 {result.get('new_all_rate')}%"
-             f" / 잔액 {result.get('balance_rate')}%")
+             f" / 잔액 {result.get('balance_rate')}%"
+             f" / 신잔액 {result.get('new_balance_rate')}%")
     elif result:
-        _log(WARN, "COFIX 자동수집 (은행연합회)",
-             f"페이지 접속 성공, 값 파싱 불완전 ({result.get('ym','?')}) — CSV fallback 사용")
+        _log(WARN, "COFIX 자동수집 (우리은행)",
+             f"접속 성공, 값 파싱 불완전 ({result.get('ym','?')}) — CSV fallback 사용")
     else:
-        _log(WARN, "COFIX 자동수집 (은행연합회)",
-             "스크래핑 실패 (JS 렌더링 필요 가능성) — CSV fallback 사용")
+        _log(WARN, "COFIX 자동수집 (우리은행)",
+             "수집 실패 (네트워크 또는 페이지 구조 변경) — CSV fallback 사용")
 
 
 def check_csv():

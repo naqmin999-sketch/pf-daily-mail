@@ -304,67 +304,124 @@ def collect_policy_news():
     return all_news[:5]
 
 
-# ─── 은행연합회 COFIX 자동수집 ───────────────────────────────────
+# ─── 우리은행 COFIX 자동수집 (Playwright) ────────────────────────
+# 은행연합회 portal.kfb.or.kr는 IP 차단으로 접근 불가 →
+# 우리은행 COFIX 고시 페이지 (spot.wooribank.com) 로 대체
 
-def collect_cofix_from_kfb():
+def collect_cofix_from_woori():
     """
-    은행연합회 COFIX 최신 공시 크롤링 (로그인 없음, 공개 공시 페이지 파싱).
-    성공 시 dict 반환, 실패 시 None 반환 → collect_all()에서 CSV fallback.
+    우리은행 COFIX 고시 페이지에서 최신 값 수집 (Playwright headless).
+    성공 시 dict 반환, 실패 시 None → collect_all()에서 CSV fallback.
+    - 신규취급액기준 / 잔액기준 : Table 1 (행별 구분)
+    - 신잔액기준 : Table 2 (앞 형제 heading으로 구분)
     """
-    from bs4 import BeautifulSoup
-    url = "https://portal.kfb.or.kr/cofix/cofix_list.php"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
-        "Referer": "https://portal.kfb.or.kr/",
-    }
     try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
 
-        table = soup.find("table")
-        if not table:
-            return None
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(
+                "https://spot.wooribank.com/pot/Dream?withyou=POLON0068",
+                timeout=30000,
+            )
+            page.wait_for_load_state("networkidle", timeout=20000)
 
-        data_rows = [r for r in table.find_all("tr") if r.find("td")]
-        if not data_rows:
-            return None
+            # 고시일 파싱
+            text = page.inner_text("body")
+            date_m = re.search(r"고시일\s*:\s*(\d{4})\.(\d{2})\.(\d{2})", text)
+            if date_m:
+                ym = f"{date_m.group(1)}-{date_m.group(2)}"
+                note = f"우리은행 COFIX 고시 {date_m.group(1)}.{date_m.group(2)}.{date_m.group(3)}"
+            else:
+                ym = datetime.date.today().strftime("%Y-%m")
+                note = "우리은행 COFIX 고시"
 
-        cells = [td.get_text(strip=True) for td in data_rows[0].find_all("td")]
-        if len(cells) < 4:
-            return None
+            tables = page.query_selector_all("table")
 
-        m = re.search(r"(\d{4})년\s*(\d{1,2})월", cells[0])
-        if not m:
-            return None
-        ym = f"{m.group(1)}-{int(m.group(2)):02d}"
+            def _get_heading(tbl):
+                """테이블 앞 형제 요소 텍스트로 테이블 종류 판별"""
+                siblings = page.evaluate("""(el) => {
+                    let texts = [];
+                    let prev = el.previousElementSibling;
+                    while (prev && texts.length < 2) {
+                        if (prev.innerText && prev.innerText.trim())
+                            texts.push(prev.innerText.trim().slice(0, 80));
+                        prev = prev.previousElementSibling;
+                    }
+                    return texts;
+                }""", tbl)
+                return " ".join(siblings)
 
-        def _f(s):
-            s = s.replace(",", "").replace("%", "").strip()
-            try:
-                return float(s) if s else None
-            except ValueError:
+            def _parse_val(s):
+                try:
+                    return float(str(s).replace(",", "").replace("%", "").strip())
+                except (ValueError, TypeError):
+                    return None
+
+            new_all_rate = balance_rate = new_balance_rate = None
+
+            for tbl in tables:
+                heading = _get_heading(tbl)
+                rows = tbl.query_selector_all("tr")
+                current_cat = None
+                for row in rows:
+                    cells = [td.inner_text().strip()
+                             for td in row.query_selector_all("th, td")]
+                    if not cells or cells[0] in ("구분", "기간", "기준금리", "비고"):
+                        continue
+
+                    if len(cells) >= 3:
+                        # 카테고리가 있는 행: ['신규취급액기준', '6개월', '2.90', ...]
+                        if cells[0] in ("신규취급액기준", "잔액기준"):
+                            current_cat = cells[0]
+                            period, val = cells[1], cells[2]
+                        else:
+                            period, val = cells[0], cells[1]
+                    elif len(cells) == 2:
+                        period, val = cells[0], cells[1]
+                    else:
+                        continue
+
+                    fval = _parse_val(val)
+                    if fval is None:
+                        continue
+
+                    # 신잔액기준 테이블: heading에 "신잔액" 포함
+                    if "신잔액" in heading:
+                        if period == "1년" and new_balance_rate is None:
+                            new_balance_rate = fval
+                        elif period == "6개월" and new_balance_rate is None:
+                            new_balance_rate = fval
+                    # 일반 COFIX 테이블
+                    elif current_cat == "신규취급액기준":
+                        if period == "1년" and new_all_rate is None:
+                            new_all_rate = fval
+                        elif period == "6개월" and new_all_rate is None:
+                            new_all_rate = fval
+                    elif current_cat == "잔액기준":
+                        if period == "1년" and balance_rate is None:
+                            balance_rate = fval
+                        elif period == "6개월" and balance_rate is None:
+                            balance_rate = fval
+
+            browser.close()
+
+            if all(v is None for v in (new_all_rate, balance_rate, new_balance_rate)):
                 return None
 
-        result = {
-            "ym":               ym,
-            "new_all_rate":     _f(cells[1]),
-            "balance_rate":     _f(cells[2]),
-            "new_balance_rate": _f(cells[3]),
-            "note":             "",
-            "source":           "은행연합회 COFIX 공시",
-            "type":             "auto",
-        }
-        # 값이 하나도 없으면 파싱 실패로 간주
-        if all(result.get(k) is None for k in ("new_all_rate", "balance_rate", "new_balance_rate")):
-            return None
-        return result
+            return {
+                "ym":               ym,
+                "new_all_rate":     new_all_rate,
+                "balance_rate":     balance_rate,
+                "new_balance_rate": new_balance_rate,
+                "note":             note,
+                "source":           "우리은행 COFIX 고시 (spot.wooribank.com)",
+                "type":             "auto",
+            }
     except Exception:
         return None
 
@@ -411,8 +468,8 @@ def collect_all():
     deal_watch     = load_deal_watch()
     company_credit = load_credit_ratings()
 
-    # COFIX: 은행연합회 자동수집 → 실패 시 CSV fallback
-    cofix_auto = collect_cofix_from_kfb()
+    # COFIX: 우리은행 고시 페이지 자동수집 → 실패 시 CSV fallback
+    cofix_auto = collect_cofix_from_woori()
     cofix_csv  = load_cofix()
     if cofix_auto:
         csv_other = [r for r in cofix_csv if r.get("ym") != cofix_auto["ym"]]
