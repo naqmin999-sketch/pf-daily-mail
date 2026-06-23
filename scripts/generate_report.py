@@ -215,7 +215,7 @@ def _box_bond_rates(bonds, rate_history):
 
 
 def _box_securitization(pf_rates, cp_rates):
-    """Box B — 유동화증권 (PF시장금리 + CP등급별)"""
+    """Box B — CP 등급별 금리"""
 
     def rate_s(v):
         if v and str(v).strip():
@@ -224,20 +224,6 @@ def _box_securitization(pf_rates, cp_rates):
             except ValueError:
                 pass
         return "입력 필요", "#d1d5db"
-
-    pf_rows = ""
-    for r in pf_rates:
-        cat   = r.get("category", "")
-        sub   = r.get("subcategory", "")
-        label = f"{cat}" + (f"&nbsp;<span style='color:#94a3b8;font-size:8px;'>{sub}</span>" if sub else "")
-        rs, fg = rate_s(r.get("rate_pct", ""))
-        pf_rows += f"""
-<tr style="border-bottom:1px solid #fef3c7;">
-  <td style="padding:3px 6px;font-size:9px;color:#374151;">{label}</td>
-  <td style="padding:3px 6px;font-size:10px;font-weight:700;color:{fg};text-align:right;white-space:nowrap;">{rs}</td>
-</tr>"""
-    if not pf_rows:
-        pf_rows = '<tr><td colspan="2" style="padding:6px;font-size:9px;color:#94a3b8;">pf_rates.csv 업데이트 필요</td></tr>'
 
     cp_rows = ""
     for r in cp_rates:
@@ -253,8 +239,7 @@ def _box_securitization(pf_rates, cp_rates):
     if not cp_rows:
         cp_rows = '<tr><td colspan="3" style="padding:6px;font-size:9px;color:#94a3b8;">cp_rates.csv 업데이트 필요</td></tr>'
 
-    pf_date = pf_rates[0].get("as_of_date", "—") if pf_rates else "—"
-    cp_date = cp_rates[0].get("as_of_date", "—") if cp_rates else "—"
+    today = datetime.date.today().strftime("%Y-%m-%d")
 
     return f"""
 <div style="border:1px solid #fde68a;border-radius:6px;overflow:hidden;">
@@ -262,14 +247,8 @@ def _box_securitization(pf_rates, cp_rates):
     <span style="font-size:11px;font-weight:800;color:#fff;">B. 유동화증권</span>
     <span style="font-size:9px;color:#fcd34d;">{badge('manual')} CSV</span>
   </div>
-  <div style="font-size:9px;color:#92400e;padding:4px 6px;background:#fef9c3;font-weight:700;">
-    PF 시장금리 &nbsp;·&nbsp; 기준일 {pf_date}
-  </div>
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;">
-    {pf_rows}
-  </table>
-  <div style="font-size:9px;color:#1e3a8a;padding:4px 6px;background:#e0e7ff;font-weight:700;margin-top:1px;">
-    CP 등급별 금리 &nbsp;·&nbsp; 기준일 {cp_date}
+  <div style="font-size:9px;color:#1e3a8a;padding:4px 6px;background:#e0e7ff;font-weight:700;">
+    CP 등급별 금리 &nbsp;·&nbsp; 기준일 {today}
   </div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ff;">
     <tr style="background:#e0e7ff;">
@@ -341,8 +320,8 @@ def _box_cofix(cofix):
 
     src_type  = (latest.get("type", "manual") if latest else "manual")
     src_badge = badge("auto") if src_type == "auto" else badge("manual")
-    src_label = "은행연합회 자동수집" if src_type == "auto" else "CSV 수동입력"
-    ym_label  = latest.get("ym", "—") if latest else "—"
+    src_label = "우리은행 자동수집" if src_type == "auto" else "CSV 수동입력"
+    today_label = datetime.date.today().strftime("%Y-%m-%d")
 
     def _val(row, field):
         if not row:
@@ -381,7 +360,7 @@ def _box_cofix(cofix):
     <span style="font-size:9px;color:#7dd3fc;">{src_badge}</span>
   </div>
   <div style="padding:4px 6px;background:#e0f2fe;font-size:9px;color:#0369a1;font-weight:700;">
-    기준월: {ym_label} &nbsp;·&nbsp; {src_label}
+    기준일: {today_label} &nbsp;·&nbsp; {src_label}
   </div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f9ff;">
     <tr style="background:#e0f2fe;">
