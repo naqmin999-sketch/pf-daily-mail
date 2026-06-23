@@ -37,10 +37,10 @@ def chg_color(chg):
     except (ValueError, TypeError):
         return '<span style="color:#e2e8f0;">—</span>'
     if chg == 0:
-        return '<span style="color:#94a3b8;">±0</span>'
+        return '<span style="color:#94a3b8;">±0.00%</span>'
     sym = "▲" if chg > 0 else "▼"
     clr = "#dc2626" if chg > 0 else "#16a34a"
-    return f'<span style="color:{clr};font-weight:600;font-size:10px;">{sym}{abs(chg):.3f}</span>'
+    return f'<span style="color:{clr};font-weight:600;font-size:10px;">{sym}{abs(chg):.2f}%</span>'
 
 
 def spread_badge(val):
@@ -165,17 +165,12 @@ def _box_bond_rates(bonds, rate_history):
         ("corp_aa_3y", "회사채 AA-", True),
     ]
     rows = ""
-    aa_spread_val = bonds.get("aa_spread", {}).get("value")
-
     for key, label, highlight in items:
         item = bonds.get(key, {})
         val  = item.get("value")
 
         if val is not None:
             val_s = f'<b style="font-size:11px;color:#0f172a;">{val:.2f}%</b>'
-            if key == "corp_aa_3y" and aa_spread_val is not None:
-                val_s += (f'&nbsp;<span style="font-size:8px;color:#7c3aed;">'
-                          f'({aa_spread_val:+.2f}%p)&nbsp;{spread_badge(aa_spread_val)}</span>')
         else:
             val_s = '<span style="color:#cbd5e1;font-size:10px;">N/A</span>'
 
@@ -187,9 +182,9 @@ def _box_bond_rates(bonds, rate_history):
         bg = "#fafafa" if highlight else "#fff"
         rows += f"""
 <tr style="background:{bg};border-bottom:1px solid #f3f4f6;">
-  <td style="width:38%;padding:4px 6px;font-size:10px;color:#475569;white-space:nowrap;">{label}</td>
+  <td style="width:28%;padding:4px 6px;font-size:10px;color:#475569;white-space:nowrap;">{label}</td>
   <td style="padding:4px 6px;text-align:right;white-space:nowrap;">{val_s}</td>
-  <td style="width:22%;padding:4px 6px;text-align:right;white-space:nowrap;">{chg_s}</td>
+  <td style="width:24%;padding:4px 6px;text-align:right;white-space:nowrap;">{chg_s}</td>
 </tr>"""
 
     return f"""
@@ -200,9 +195,9 @@ def _box_bond_rates(bonds, rate_history):
   </div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;table-layout:fixed;">
     <tr style="background:#eff6ff;">
-      <th style="width:38%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:left;font-weight:700;">항목</th>
-      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">금리 (스프레드)</th>
-      <th style="width:22%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">전일비</th>
+      <th style="width:28%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:left;font-weight:700;">항목</th>
+      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">금리</th>
+      <th style="width:24%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">전일비</th>
     </tr>
     {rows}
   </table>
