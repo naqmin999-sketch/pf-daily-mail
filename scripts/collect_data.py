@@ -362,51 +362,49 @@ def collect_cofix_from_woori():
                 except (ValueError, TypeError):
                     return None
 
-            new_all_rate = balance_rate = new_balance_rate = None
+            # {카테고리: {"6개월": val, "1년": val}} 형태로 전부 수집 후 1년 우선 선택
+            collected: dict = {}
 
             for tbl in tables:
                 heading = _get_heading(tbl)
+                # 테이블 종류 결정
+                if "신잔액" in heading:
+                    tbl_cat = "신잔액기준"
+                else:
+                    tbl_cat = None  # Table 1: 행 내 구분 컬럼으로 결정
+
                 rows = tbl.query_selector_all("tr")
-                current_cat = None
+                current_cat = tbl_cat
                 for row in rows:
                     cells = [td.inner_text().strip()
                              for td in row.query_selector_all("th, td")]
                     if not cells or cells[0] in ("구분", "기간", "기준금리", "비고"):
                         continue
 
-                    if len(cells) >= 3:
-                        # 카테고리가 있는 행: ['신규취급액기준', '6개월', '2.90', ...]
-                        if cells[0] in ("신규취급액기준", "잔액기준"):
-                            current_cat = cells[0]
-                            period, val = cells[1], cells[2]
-                        else:
-                            period, val = cells[0], cells[1]
-                    elif len(cells) == 2:
+                    if len(cells) >= 3 and cells[0] in ("신규취급액기준", "잔액기준"):
+                        current_cat = cells[0]
+                        period, val = cells[1], cells[2]
+                    elif len(cells) >= 2:
                         period, val = cells[0], cells[1]
                     else:
                         continue
 
+                    if current_cat is None:
+                        continue
                     fval = _parse_val(val)
                     if fval is None:
                         continue
 
-                    # 신잔액기준 테이블: heading에 "신잔액" 포함
-                    if "신잔액" in heading:
-                        if period == "1년" and new_balance_rate is None:
-                            new_balance_rate = fval
-                        elif period == "6개월" and new_balance_rate is None:
-                            new_balance_rate = fval
-                    # 일반 COFIX 테이블
-                    elif current_cat == "신규취급액기준":
-                        if period == "1년" and new_all_rate is None:
-                            new_all_rate = fval
-                        elif period == "6개월" and new_all_rate is None:
-                            new_all_rate = fval
-                    elif current_cat == "잔액기준":
-                        if period == "1년" and balance_rate is None:
-                            balance_rate = fval
-                        elif period == "6개월" and balance_rate is None:
-                            balance_rate = fval
+                    collected.setdefault(current_cat, {})[period] = fval
+
+            def _pick(cat):
+                """1년 우선, 없으면 6개월, 없으면 3개월"""
+                d = collected.get(cat, {})
+                return d.get("1년") or d.get("6개월") or d.get("3개월")
+
+            new_all_rate     = _pick("신규취급액기준")
+            balance_rate     = _pick("잔액기준")
+            new_balance_rate = _pick("신잔액기준")
 
             browser.close()
 
