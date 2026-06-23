@@ -442,6 +442,57 @@ def discover_ecos_items(stat_code="817Y002"):
         print(f"  {it.get('ITEM_CODE',''):15} | {it.get('ITEM_NAME',''):35} | {it.get('ITEM_NAME2','')}")
 
 
+# ─── COFIX CSV 자동 저장 ─────────────────────────────────────────
+
+def _save_cofix_to_csv(cofix_auto):
+    """
+    새 달 COFIX가 수집되면 cofix.csv 맨 위에 자동 추가.
+    이미 같은 ym이 있으면 값만 업데이트 (덮어쓰기).
+    """
+    path = MANUAL_DIR / "cofix.csv"
+    if not path.exists():
+        return
+
+    existing = []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or ["ym","new_all_rate","balance_rate","new_balance_rate","note"]
+        for row in reader:
+            existing.append(row)
+
+    ym_set = {r["ym"] for r in existing}
+
+    def _s(v):
+        return "" if v is None else str(v)
+
+    new_row = {
+        "ym":               cofix_auto["ym"],
+        "new_all_rate":     _s(cofix_auto.get("new_all_rate")),
+        "balance_rate":     _s(cofix_auto.get("balance_rate")),
+        "new_balance_rate": _s(cofix_auto.get("new_balance_rate")),
+        "note":             cofix_auto.get("note", ""),
+    }
+
+    if cofix_auto["ym"] in ym_set:
+        # 기존 행 업데이트 (값이 비어있는 경우에만)
+        for row in existing:
+            if row["ym"] == cofix_auto["ym"]:
+                for k in ("new_all_rate", "balance_rate", "new_balance_rate"):
+                    if not row.get(k) and new_row[k]:
+                        row[k] = new_row[k]
+                if not row.get("note") and new_row["note"]:
+                    row["note"] = new_row["note"]
+        updated = existing
+    else:
+        # 새 달: 맨 위에 추가 (최신순 유지)
+        updated = [new_row] + existing
+
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(updated)
+
+
 # ─── 메인 수집 ────────────────────────────────────────────────────
 
 def collect_all():
@@ -466,9 +517,11 @@ def collect_all():
     deal_watch     = load_deal_watch()
     company_credit = load_credit_ratings()
 
-    # COFIX: 우리은행 고시 페이지 자동수집 → 실패 시 CSV fallback
+    # COFIX: 우리은행 고시 페이지 자동수집 → CSV 저장 → 실패 시 CSV fallback
     cofix_auto = collect_cofix_from_woori()
-    cofix_csv  = load_cofix()
+    if cofix_auto:
+        _save_cofix_to_csv(cofix_auto)          # 새 달이면 CSV에 자동 추가
+    cofix_csv = load_cofix()                    # 저장 후 다시 로드
     if cofix_auto:
         csv_other = [r for r in cofix_csv if r.get("ym") != cofix_auto["ym"]]
         cofix = [cofix_auto] + csv_other
