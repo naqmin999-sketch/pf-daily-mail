@@ -55,6 +55,11 @@ PF_KEYWORDS = [
     "건설사 CP 발행",
     "PF 차환",
     "ABSTB 건설",
+    "부동산PF 저축은행",
+    "건설사 신용등급",
+    "책임준공 건설",
+    "HUG 미분양",
+    "시행사 자금조달",
 ]
 
 # 부동산 정책/감독 뉴스 키워드
@@ -70,6 +75,39 @@ POLICY_KEYWORDS = [
     "주택도시기금",
     "전세보증 사고",
 ]
+
+# 뉴스 관련성 필터 — PF/건설금융과 무관한 기사 제외
+_NEWS_EXCLUDE = [
+    "스페이스X", "SpaceX", "엔비디아", "NVIDIA",
+    "테슬라", "Tesla", "구글", "애플", "메타", "아마존",
+    "가상자산", "비트코인", "코인", "NFT",
+    "해외기업", "미국채", "미 국채",
+]
+
+_NEWS_INCLUDE_PF = [
+    "PF", "프로젝트파이낸싱", "브릿지론", "ABCP", "ABSTB",
+    "차환", "책임준공", "HUG", "미분양", "건설사", "부동산금융",
+    "시행사", "저축은행 PF", "캐피탈 PF", "착공", "유동화",
+    "건설금융", "PF대출", "부동산 PF", "PF 부실", "PF시장",
+]
+
+_NEWS_INCLUDE_POLICY = [
+    "국토부", "국토교통부", "금융위", "금감원", "HUG", "주택도시보증",
+    "가계대출", "DSR", "미분양", "부동산", "전세", "주택공급",
+    "주택도시기금", "청약", "임대차", "공급대책", "분양가",
+]
+
+
+def _news_relevant(article, include_kws):
+    """제외 키워드 없고 포함 키워드 하나 이상 있으면 True"""
+    text = article.get("title", "") + " " + article.get("desc", "")
+    for kw in _NEWS_EXCLUDE:
+        if kw in text:
+            return False
+    for kw in include_kws:
+        if kw in text:
+            return True
+    return False
 
 
 # ─── ECOS API ─────────────────────────────────────────────────────
@@ -279,29 +317,31 @@ def fetch_naver_news(keyword, display=5):
 
 
 def collect_pf_news():
-    all_news, seen = [], set()
+    candidates, seen = [], set()
     for kw in PF_KEYWORDS:
-        for art in fetch_naver_news(kw, display=2):
+        for art in fetch_naver_news(kw, display=3):
             if art["title"] not in seen:
                 seen.add(art["title"])
-                all_news.append(art)
+                candidates.append(art)
         time.sleep(0.2)
-        if len(all_news) >= 5:
+        if len(candidates) >= 18:
             break
-    return all_news[:5]
+    relevant = [a for a in candidates if _news_relevant(a, _NEWS_INCLUDE_PF)]
+    return (relevant if relevant else candidates)[:3]
 
 
 def collect_policy_news():
-    all_news, seen = [], set()
+    candidates, seen = [], set()
     for kw in POLICY_KEYWORDS:
-        for art in fetch_naver_news(kw, display=2):
+        for art in fetch_naver_news(kw, display=3):
             if art["title"] not in seen:
                 seen.add(art["title"])
-                all_news.append(art)
+                candidates.append(art)
         time.sleep(0.2)
-        if len(all_news) >= 5:
+        if len(candidates) >= 18:
             break
-    return all_news[:5]
+    relevant = [a for a in candidates if _news_relevant(a, _NEWS_INCLUDE_POLICY)]
+    return (relevant if relevant else candidates)[:3]
 
 
 # ─── 우리은행 COFIX 자동수집 (Playwright) ────────────────────────

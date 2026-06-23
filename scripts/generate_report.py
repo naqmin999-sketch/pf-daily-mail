@@ -119,8 +119,8 @@ def fmt_date(d):
     return d
 
 
-SP      = 'style="background:#fff;padding:16px 22px;border-bottom:1px solid #e8edf4;"'
-SP_LAST = 'style="background:#fff;padding:16px 22px;"'
+SP      = 'style="background:#fff;padding:12px 22px;border-bottom:1px solid #e8edf4;"'
+SP_LAST = 'style="background:#fff;padding:12px 22px;"'
 
 
 # ─── Header ───────────────────────────────────────────────────────
@@ -151,6 +151,99 @@ def html_header(data):
     </div>
   </div>
 </td></tr>"""
+
+
+# ─── Executive Summary ────────────────────────────────────────────
+
+def html_exec_summary(data):
+    """리포트 최상단 요약 박스 — 핵심 지표 + 뉴스 요약 + 당사 시사점"""
+    bonds        = data.get("bonds", {})
+    rate_history = data.get("rate_history", {})
+    pf_news      = data.get("pf_news", [])
+    policy_news  = data.get("policy_news", [])
+
+    def _val(key):
+        return bonds.get(key, {}).get("value")
+
+    gov3y   = _val("gov_3y")
+    corp_aa = _val("corp_aa_3y")
+    spread  = _val("aa_spread")
+
+    gov3y_s   = f"{gov3y:.2f}%" if gov3y is not None else "—"
+    corp_aa_s = f"{corp_aa:.2f}%" if corp_aa is not None else "—"
+    spread_s  = f"{spread:.3f}%p" if spread is not None else "—"
+
+    def _chg(key, curr):
+        hist = rate_history.get(key, [])
+        if curr is None or len(hist) < 2:
+            return ""
+        d = round(curr - hist[-2][1], 3)
+        if d == 0:
+            return ""
+        sym = "▲" if d > 0 else "▼"
+        clr = "#dc2626" if d > 0 else "#16a34a"
+        return (f'<span style="color:{clr};font-size:9px;font-weight:700;'
+                f'margin-left:5px;">{sym}{abs(d):.2f}</span>')
+
+    gov3y_chg = _chg("gov_3y",     gov3y)
+    corp_chg  = _chg("corp_aa_3y", corp_aa)
+
+    if spread is not None:
+        sp_b = spread_badge(spread)
+        if spread < 0.5:
+            impl = "스프레드 Tight — PF 신용 여건 양호. 조달비용 상대적 안정권."
+        elif spread < 1.0:
+            impl = "스프레드 Normal — PF 조달 환경 보통. 개별 프로젝트 신용도 관리 필요."
+        elif spread < 1.5:
+            impl = f"스프레드 Wide ({spread:.3f}%p) — 조달비용 상승 압력. 차환 리스크 모니터링 요."
+        else:
+            impl = f"스프레드 Alert ({spread:.3f}%p) — PF 신용경색 우려. 유동성 선제 대응 점검 필요."
+    else:
+        sp_b = ""
+        impl = "스프레드 데이터 수집 후 자동 업데이트"
+
+    def _title(news_list):
+        if not news_list:
+            return "금일 관련 뉴스 없음"
+        t = news_list[0]["title"]
+        return t[:55] + "…" if len(t) > 55 else t
+
+    pf_issue  = _title(pf_news)
+    pol_issue = _title(policy_news)
+
+    rows_data = [
+        ("국고채 3Y",     f'<b style="color:#1e3a8a;">{gov3y_s}</b>{gov3y_chg}',             "#eff6ff"),
+        ("회사채 AA-",    f'<b style="color:#1e3a8a;">{corp_aa_s}</b>{corp_chg}',             "#eff6ff"),
+        ("AA- 스프레드",  f'<b style="color:#7c3aed;">{spread_s}</b>&nbsp;{sp_b}',            "#eff6ff"),
+        ("PF 시장 이슈",  f'<span style="color:#0f172a;">{pf_issue}</span>',                  "#fff"),
+        ("정책 핵심 이슈",f'<span style="color:#0f172a;">{pol_issue}</span>',                  "#fff"),
+        ("당사 시사점",   f'<span style="color:#1e3a8a;font-weight:600;">{impl}</span>',       "#f8fafc"),
+    ]
+
+    rows_html = ""
+    for label, val, bg in rows_data:
+        rows_html += (
+            f'<tr style="background:{bg};border-bottom:1px solid #e8edf4;">'
+            f'<td style="padding:5px 10px 5px 14px;font-size:10px;color:#1e3a8a;'
+            f'font-weight:700;white-space:nowrap;width:95px;">■ {label}</td>'
+            f'<td style="padding:5px 12px;font-size:11px;color:#0f172a;line-height:1.5;">{val}</td>'
+            f'</tr>'
+        )
+
+    return (
+        f'<tr><td style="background:#f0f4ff;padding:12px 22px;border-bottom:2px solid #1e3a8a;">'
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+        f'<span style="background:#1e3a8a;color:#fff;border-radius:4px;'
+        f'padding:3px 10px;font-size:11px;font-weight:800;">Executive Summary</span>'
+        f'<span style="font-size:10px;color:#64748b;">'
+        f'{data["report_date"]} 기준 &nbsp;·&nbsp; 자동 생성</span>'
+        f'</div>'
+        f'<table width="100%" cellpadding="0" cellspacing="0"'
+        f' style="border:1px solid #c7d2fe;border-radius:6px;overflow:hidden;">'
+        f'{rows_html}'
+        f'</table>'
+        f'</td></tr>'
+    )
 
 
 # ─── Section 1: 시황 요약 3박스 ──────────────────────────────────
@@ -537,15 +630,9 @@ def html_deal_watch(data):
         return f"""
 <tr><td {SP}>
   {sec_header("④ ", "Deal / 조달 사례 Watch", "#f59e0b")}
-  <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:14px;">
-    <div style="font-size:12px;color:#92400e;margin-bottom:6px;">
-      {badge('manual')} manual_data/deal_watch.csv 에 실제 딜 정보 입력 필요
-    </div>
-    <div style="font-size:10px;color:#94a3b8;line-height:1.8;">
-      컬럼: type(도시정비/PF/브릿지론) · party(당사/타사) · borrower(조달주체) ·
-      guarantee_type(HUG/연대보증/책임준공/기타) · rate_pct · maturity ·
-      project_name · amount_bn · remark · as_of_date · source
-    </div>
+  <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;
+              padding:8px 14px;font-size:11px;color:#92400e;text-align:center;">
+    금일 입력된 주요 조달사례 없음
   </div>
 </td></tr>"""
 
@@ -633,16 +720,16 @@ def html_company_credit(data):
         alert_bg = "background:#fff7ed;" if (rt.startswith("BB") or "부정적" in ot) else ""
         rows += f"""
 <tr style="{alert_bg}border-bottom:1px solid #f1f5f9;">
-  <td style="padding:6px 10px;font-size:12px;font-weight:600;color:#0f172a;
+  <td style="padding:4px 8px;font-size:11px;font-weight:600;color:#0f172a;
              white-space:nowrap;">{co}</td>
-  <td style="padding:6px 10px;text-align:center;">
-    <b style="color:{rc};font-size:13px;">{rt}</b>
+  <td style="padding:4px 8px;text-align:center;">
+    <b style="color:{rc};font-size:12px;">{rt}</b>
   </td>
-  <td style="padding:6px 10px;font-size:11px;color:#64748b;text-align:center;
+  <td style="padding:4px 8px;font-size:10px;color:#64748b;text-align:center;
              white-space:nowrap;">{ot}</td>
-  <td style="padding:6px 10px;font-size:10px;color:#94a3b8;white-space:nowrap;">{rtr}</td>
-  <td style="padding:6px 10px;font-size:10px;color:#94a3b8;white-space:nowrap;">{dt}</td>
-  <td style="padding:6px 10px;font-size:10px;color:#94a3b8;">{nt[:40] if nt else ""}</td>
+  <td style="padding:4px 8px;font-size:9px;color:#94a3b8;white-space:nowrap;">{rtr}</td>
+  <td style="padding:4px 8px;font-size:9px;color:#94a3b8;white-space:nowrap;">{dt}</td>
+  <td style="padding:4px 8px;font-size:9px;color:#94a3b8;">{nt[:40] if nt else ""}</td>
 </tr>"""
 
     return f"""
@@ -651,12 +738,12 @@ def html_company_credit(data):
   <table width="100%" cellpadding="0" cellspacing="0"
          style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
     <tr style="background:#f8fafc;">
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:left;font-weight:700;">건설사</th>
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">등급</th>
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">전망</th>
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;font-weight:700;">평가사</th>
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;font-weight:700;">평가일</th>
-      <th style="padding:6px 10px;font-size:10px;color:#64748b;font-weight:700;">비고</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;text-align:left;font-weight:700;">건설사</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">등급</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">전망</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;font-weight:700;">평가사</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;font-weight:700;">평가일</th>
+      <th style="padding:4px 8px;font-size:10px;color:#64748b;font-weight:700;">비고</th>
     </tr>
     {rows}
   </table>
@@ -704,6 +791,7 @@ table { border-collapse: collapse; }
 def build_html(data):
     body = (
         html_header(data)         +
+        html_exec_summary(data)   +
         html_top_3box(data)       +
         html_rate_charts(data)    +
         html_market_news(data)    +
