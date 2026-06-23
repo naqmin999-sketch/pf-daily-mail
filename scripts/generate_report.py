@@ -598,7 +598,7 @@ def html_market_news(data):
     policy_news = data.get("policy_news", [])
 
     return f"""
-<tr><td {SP}>
+<tr class="page-break-before"><td {SP}>
   {sec_header("③ ", "부동산 금융시장 및 정책 동향", "#ec4899")}
   <div style="display:flex;gap:14px;">
     <div style="flex:1;">
@@ -784,7 +784,11 @@ body {
 a { color: #2563eb; text-decoration: none; }
 a:hover { text-decoration: underline; }
 table { border-collapse: collapse; }
-@media print { body { background: white !important; } }
+@media print {
+  body { background: white !important; }
+  .page-break-before { page-break-before: always; break-before: page; }
+  .no-break { page-break-inside: avoid; break-inside: avoid; }
+}
 """
 
 
