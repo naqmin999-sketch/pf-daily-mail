@@ -22,15 +22,20 @@ OK   = "[OK]  "
 WARN = "[WARN]"
 FAIL = "[FAIL]"
 
-_results = []
+_results        = []
+_critical_count = 0  # API 키·이메일 설정 누락만 카운트 → exit code 기준
 
 
-def _log(tag, label, msg=""):
+def _log(tag, label, msg="", critical=False):
+    """critical=True: exit code 1 유발 (API 키/이메일 설정 누락 한정)"""
+    global _critical_count
     line = f"  {tag} {label}"
     if msg:
         line += f": {msg}"
     print(line)
     _results.append((tag.strip("[] "), label, msg))
+    if critical and "FAIL" in tag:
+        _critical_count += 1
 
 
 def _mask(val):
@@ -53,7 +58,7 @@ def check_ecos():
 
     key = os.getenv("ECOS_API_KEY", "")
     if not key:
-        _log(FAIL, "ECOS API 키", "미설정 — ECOS_API_KEY 필요")
+        _log(FAIL, "ECOS API 키", "미설정 — ECOS_API_KEY 필요", critical=True)
         return
     _log(OK, "ECOS API 키", f"{_mask(key)} (설정됨)")
 
@@ -68,9 +73,10 @@ def check_ecos():
         elif "응답 없음" in err or "item_code 미확인" in err:
             _log(WARN, f"ECOS {label}", "item_code 미확인 — 응답 없음 (N/A 표시)")
         elif _transient:
-            _log(WARN, f"ECOS {label}", "일시적 네트워크 오류 — 재실행 또는 send 모드에서 재확인")
+            _log(WARN, f"ECOS {label}", "일시적 네트워크 오류 — send 모드에서 재시도됨")
         else:
-            _log(FAIL, f"ECOS {label}", err or "수집 실패")
+            # 기타 오류: 보조 데이터이므로 WARN (send 모드에서는 N/A 표시)
+            _log(WARN, f"ECOS {label}", f"수집 오류 — {err[:60] if err else '원인 미상'}")
 
 
 # ── B. Naver API ───────────────────────────────────────────────────
@@ -86,7 +92,8 @@ def check_naver():
     cid = os.getenv("NAVER_CLIENT_ID", "")
     sec = os.getenv("NAVER_CLIENT_SECRET", "")
     if not cid or not sec:
-        _log(FAIL, "Naver API 키", "미설정 — NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 필요")
+        _log(FAIL, "Naver API 키", "미설정 — NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 필요",
+             critical=True)
         return
     _log(OK, "Naver API 키", f"Client-ID {_mask(cid)} (설정됨)")
 
@@ -95,7 +102,8 @@ def check_naver():
         titles = [a["title"] for a in news]
         unique = len(set(titles))
         if len(news) == 0:
-            _log(FAIL, f"Naver {label}", "0건 — API 오류 또는 키 만료 가능성")
+            # 키는 있으나 수집 0건 — 일시적 오류이므로 WARN
+            _log(WARN, f"Naver {label}", "0건 — 일시적 API 오류 가능성, 재실행 권장")
         else:
             dup = f" / 중복 {len(news) - unique}건 제거됨" if unique < len(news) else ""
             _log(OK, f"Naver {label}", f"{len(news)}건 (고유 {unique}건){dup}")
@@ -169,7 +177,7 @@ def check_csv():
         label = spec["label"]
 
         if not path.exists():
-            _log(FAIL, f"{filename} ({label})", "파일 없음")
+            _log(WARN, f"{filename} ({label})", "파일 없음 — manual_data/ 에 추가 필요")
             continue
 
         with open(path, encoding="utf-8-sig") as f:
@@ -179,11 +187,11 @@ def check_csv():
 
         missing_cols = [c for c in spec["required"] if c not in headers]
         if missing_cols:
-            _log(FAIL, f"{filename} ({label})", f"필수 컬럼 누락: {', '.join(missing_cols)}")
+            _log(WARN, f"{filename} ({label})", f"필수 컬럼 누락: {', '.join(missing_cols)}")
             continue
 
         if len(rows) == 0:
-            _log(FAIL, f"{filename} ({label})", "0건 (데이터 없음)")
+            _log(WARN, f"{filename} ({label})", "0건 (파일은 있으나 데이터 없음)")
             continue
 
         filled = (
@@ -266,7 +274,7 @@ def check_email():
                 display = _mask(val)
             _log(OK, f"{label} ({env_key})", display)
         elif required:
-            _log(FAIL, f"{label} ({env_key})", "미설정")
+            _log(FAIL, f"{label} ({env_key})", "미설정", critical=True)
         else:
             _log(WARN, f"{label} ({env_key})", "미설정 (기본값 사용)")
 
@@ -283,17 +291,21 @@ def _summary():
     if warn:
         print(f"  △ WARN : {warn}개")
     if fail:
-        print(f"  ✕ FAIL : {fail}개")
+        print(f"  ✕ FAIL : {fail}개  ← 치명적: {_critical_count}개")
 
-    if fail == 0 and warn == 0:
+    if _critical_count == 0 and fail == 0 and warn == 0:
         print("\n  → 모든 항목 정상. 메일 발송 가능 상태.")
-    elif fail == 0:
-        print("\n  → 필수 항목 OK. WARN 항목 내용 확인 권장.")
+    elif _critical_count == 0 and fail == 0:
+        print("\n  → 필수 항목 OK. WARN 항목은 데이터 미입력 또는 일시적 오류.")
+    elif _critical_count == 0:
+        print(f"\n  → 보조 항목 {fail}개 오류. 메일 발송 동작 가능 — WARN 내용 확인 권장.")
     else:
-        print(f"\n  → FAIL {fail}개 해결 후 재진단 필요.")
+        print(f"\n  → 치명적 오류 {_critical_count}개: API 키 또는 이메일 설정 확인 필요.")
+    print("=" * 56)
+    print(f"  exit code: {'1 (치명적 오류)' if _critical_count > 0 else '0'}")
     print("=" * 56)
 
-    return fail
+    return _critical_count
 
 
 # ── 진입점 ────────────────────────────────────────────────────────
@@ -310,11 +322,9 @@ def run_diagnose():
     check_csv()
     check_files()
     check_email()
-    fail_count = _summary()
-    return fail_count
+    return _summary()
 
 
 if __name__ == "__main__":
     import sys
-    fail_count = run_diagnose()
-    sys.exit(1 if fail_count > 0 else 0)
+    sys.exit(1 if run_diagnose() > 0 else 0)
