@@ -157,41 +157,39 @@ def html_header(data):
 
 def _box_bond_rates(bonds, rate_history):
     """Box A — 채권금리"""
+    # (key, label, highlight)
     items = [
-        ("base_rate",      "기준금리",      False, False),
-        ("cd_91",          "CD 91일",       True,  False),
-        ("gov_3y",         "국고채 3Y",     True,  False),
-        ("gov_10y",        "국고채 10Y",    False, False),
-        ("corp_aa_3y",     "회사채 AA-",    True,  False),
-        ("corp_aminus_3y", "회사채 A-",     True,  False),
-        ("aa_spread",      "AA- 스프레드",  False, True),
+        ("base_rate",  "기준금리",   False),
+        ("cd_91",      "CD 91일",    True),
+        ("gov_3y",     "국고채 3Y",  True),
+        ("corp_aa_3y", "회사채 AA-", True),
     ]
     rows = ""
-    for key, label, highlight, is_spread in items:
+    aa_spread_val = bonds.get("aa_spread", {}).get("value")
+
+    for key, label, highlight in items:
         item = bonds.get(key, {})
         val  = item.get("value")
 
         if val is not None:
-            if is_spread:
-                val_s = (f'<b style="color:#7c3aed;font-size:11px;">{val:+.3f}%p</b>'
-                         f'&nbsp;{spread_badge(val)}')
-            else:
-                val_s = f'<b style="font-size:11px;color:#0f172a;">{val:.2f}%</b>'
+            val_s = f'<b style="font-size:11px;color:#0f172a;">{val:.2f}%</b>'
+            if key == "corp_aa_3y" and aa_spread_val is not None:
+                val_s += (f'&nbsp;<span style="font-size:8px;color:#7c3aed;">'
+                          f'({aa_spread_val:+.2f}%p)&nbsp;{spread_badge(aa_spread_val)}</span>')
         else:
             val_s = '<span style="color:#cbd5e1;font-size:10px;">N/A</span>'
 
         hist  = rate_history.get(key, [])
-        if len(hist) >= 2 and not is_spread:
-            chg_s = chg_color(round(hist[-1][1] - hist[-2][1], 3))
-        else:
-            chg_s = '<span style="color:#e2e8f0;font-size:9px;">—</span>'
+        chg_s = (chg_color(round(hist[-1][1] - hist[-2][1], 3))
+                 if len(hist) >= 2
+                 else '<span style="color:#e2e8f0;font-size:9px;">—</span>')
 
         bg = "#fafafa" if highlight else "#fff"
         rows += f"""
 <tr style="background:{bg};border-bottom:1px solid #f3f4f6;">
-  <td style="padding:4px 6px;font-size:10px;color:#475569;white-space:nowrap;">{label}</td>
+  <td style="width:38%;padding:4px 6px;font-size:10px;color:#475569;white-space:nowrap;">{label}</td>
   <td style="padding:4px 6px;text-align:right;white-space:nowrap;">{val_s}</td>
-  <td style="padding:4px 6px;text-align:right;white-space:nowrap;">{chg_s}</td>
+  <td style="width:22%;padding:4px 6px;text-align:right;white-space:nowrap;">{chg_s}</td>
 </tr>"""
 
     return f"""
@@ -200,17 +198,14 @@ def _box_bond_rates(bonds, rate_history):
     <span style="font-size:11px;font-weight:800;color:#fff;">A. 채권금리</span>
     <span style="font-size:9px;color:#a5b4fc;">{badge('auto')} ECOS</span>
   </div>
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;table-layout:fixed;">
     <tr style="background:#eff6ff;">
-      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:left;font-weight:700;">항목</th>
-      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">금리</th>
-      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">전일비</th>
+      <th style="width:38%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:left;font-weight:700;">항목</th>
+      <th style="padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">금리 (스프레드)</th>
+      <th style="width:22%;padding:4px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">전일비</th>
     </tr>
     {rows}
   </table>
-  <div style="padding:3px 6px;font-size:8px;color:#94a3b8;background:#fafafa;">
-    A-: ECOS item_code 확인 중
-  </div>
 </div>"""
 
 
@@ -401,11 +396,29 @@ def html_top_3box(data):
 
 # ─── Section 2: 채권금리 추이 ─────────────────────────────────────
 
+def _hist_at(hist, days_ago):
+    """N일 전 값 — 날짜 기준 가장 가까운 과거값 반환"""
+    if not hist:
+        return None
+    target = (datetime.date.today() - datetime.timedelta(days=days_ago)).strftime("%Y%m%d")
+    candidates = [(d, v) for d, v in hist if d <= target]
+    return candidates[-1][1] if candidates else None
+
+
+def _diff_s(curr, past):
+    """현재 − 과거 차이 문자열 (색상 포함)"""
+    if curr is None or past is None:
+        return '<span style="color:#cbd5e1;">—</span>'
+    d = round(curr - past, 3)
+    clr = "#dc2626" if d > 0 else ("#16a34a" if d < 0 else "#64748b")
+    sym = "▲" if d > 0 else ("▼" if d < 0 else "")
+    return f'<span style="color:{clr};font-size:10px;">{sym}{abs(d):.2f}</span>'
+
+
 def _build_rate_chart(rate_history, bonds):
     ITEMS = [
         ("cd_91",      "CD 91일",    "#06b6d4"),
         ("gov_3y",     "국고채 3Y",  "#3b82f6"),
-        ("gov_10y",    "국고채 10Y", "#8b5cf6"),
         ("corp_aa_3y", "회사채 AA-", "#f59e0b"),
     ]
     has_data = any(rate_history.get(k) for k, _, _ in ITEMS)
@@ -414,34 +427,33 @@ def _build_rate_chart(rate_history, bonds):
 
     rows = ""
     for key, label, color in ITEMS:
-        hist   = rate_history.get(key, [])
-        vals   = [v for _, v in hist]
-        curr   = bonds.get(key, {}).get("value")
-        curr_s = f"{curr:.2f}%" if curr is not None else "—"
-        first_s= f"{vals[0]:.2f}%" if vals else "—"
-        svg    = sparkline(hist, color=color)
+        hist  = rate_history.get(key, [])
+        curr  = bonds.get(key, {}).get("value")
+        curr_s = f"<b>{curr:.2f}%</b>" if curr is not None else "—"
+        svg   = sparkline(hist, width=160, height=26, color=color)
+        d30   = _diff_s(curr, _hist_at(hist, 30))
+        d90   = _diff_s(curr, _hist_at(hist, 90))
+        d180  = _diff_s(curr, _hist_at(hist, 180))
         rows += f"""
 <tr style="border-bottom:1px solid #f1f5f9;">
-  <td style="padding:6px 10px;font-size:12px;font-weight:500;color:#334155;
-             white-space:nowrap;">{label}</td>
-  <td style="padding:6px 10px;">{svg}</td>
-  <td style="padding:6px 10px;font-size:12px;font-weight:700;color:#0f172a;
-             text-align:right;white-space:nowrap;">{curr_s}</td>
-  <td style="padding:6px 10px;font-size:11px;color:#64748b;
-             text-align:right;white-space:nowrap;">{first_s}</td>
-  <td style="padding:6px 10px;font-size:9px;color:#94a3b8;
-             text-align:right;">{len(vals)}일</td>
+  <td style="padding:5px 8px;font-size:11px;font-weight:500;color:#334155;white-space:nowrap;">{label}</td>
+  <td style="padding:5px 8px;">{svg}</td>
+  <td style="padding:5px 8px;font-size:11px;color:#0f172a;text-align:right;white-space:nowrap;">{curr_s}</td>
+  <td style="padding:5px 8px;text-align:right;white-space:nowrap;">{d30}</td>
+  <td style="padding:5px 8px;text-align:right;white-space:nowrap;">{d90}</td>
+  <td style="padding:5px 8px;text-align:right;white-space:nowrap;">{d180}</td>
 </tr>"""
 
     return f"""
 <table width="100%" cellpadding="0" cellspacing="0"
        style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
   <tr style="background:#f8fafc;">
-    <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:left;font-weight:700;">항목</th>
-    <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">추이 (~30일)</th>
-    <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">현재</th>
-    <th style="padding:6px 10px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">30일전</th>
-    <th style="padding:6px 10px;font-size:10px;color:#64748b;font-weight:700;"></th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:left;font-weight:700;">항목</th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:center;font-weight:700;">추이 (1년)</th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">현재</th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">30일전▲▼</th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">90일전▲▼</th>
+    <th style="padding:5px 8px;font-size:10px;color:#64748b;text-align:right;font-weight:700;">180일전▲▼</th>
   </tr>
   {rows}
 </table>"""
@@ -453,7 +465,7 @@ def html_rate_charts(data):
 
     return f"""
 <tr><td {SP}>
-  {sec_header("② ", "채권금리 추이 (최근 30일)", "#475569")}
+  {sec_header("② ", "채권금리 추이 (최근 1년)", "#475569")}
   {_build_rate_chart(rate_history, bonds)}
   <div style="font-size:9px;color:#94a3b8;margin-top:4px;">
     {badge('auto')} 한국은행 ECOS 일별 데이터 기준 &nbsp;|&nbsp; 전일비: 직전 영업일 대비

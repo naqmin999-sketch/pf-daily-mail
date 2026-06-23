@@ -40,8 +40,8 @@ ECOS_ITEMS = {
     "corp_aminus_3y": ("817Y002", "D", "010315000", "회사채 3Y A-"),   # 미확인
 }
 
-# 스파크라인용 30일 이력 수집 대상
-HISTORY_KEYS = ["cd_91", "gov_3y", "gov_10y", "corp_aa_3y"]
+# 1년 추이 이력 수집 대상
+HISTORY_KEYS = ["cd_91", "gov_3y", "corp_aa_3y"]
 
 # PF/조달 금융 뉴스 키워드
 PF_KEYWORDS = [
@@ -105,13 +105,13 @@ def fetch_ecos(stat_code, cycle, item_code, label):
                 "source": "한국은행 ECOS", "type": "auto", "error": str(e)}
 
 
-def fetch_ecos_history(stat_code, cycle, item_code, days=40):
-    """최근 N일 시계열 [(date_str, float), ...] — 스파크라인용"""
+def fetch_ecos_history(stat_code, cycle, item_code, days=400):
+    """최근 N일 시계열 [(date_str, float), ...] — 추이 차트용 (1년 기본)"""
     if not ECOS_API_KEY:
         return []
     end   = datetime.date.today()
     start = end - datetime.timedelta(days=days)
-    url = (f"{ECOS_BASE}/{ECOS_API_KEY}/json/kr/1/60/{stat_code}/{cycle}"
+    url = (f"{ECOS_BASE}/{ECOS_API_KEY}/json/kr/1/300/{stat_code}/{cycle}"
            f"/{start.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{item_code}")
     try:
         r = requests.get(url, timeout=10)
@@ -150,11 +150,11 @@ def collect_bonds():
 
 
 def collect_rate_history():
-    """주요 금리 30일 이력 수집 (스파크라인용)"""
+    """주요 금리 1년 이력 수집 (추이 차트용)"""
     history = {}
     for key in HISTORY_KEYS:
         stat, cycle, item, _ = ECOS_ITEMS[key]
-        history[key] = fetch_ecos_history(stat, cycle, item, days=40)
+        history[key] = fetch_ecos_history(stat, cycle, item, days=400)
         time.sleep(0.15)
     return history
 
