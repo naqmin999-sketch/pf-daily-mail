@@ -37,7 +37,7 @@ def chg_color(chg):
     except (ValueError, TypeError):
         return '<span style="color:#e2e8f0;">—</span>'
     if chg == 0:
-        return '<span style="color:#94a3b8;">±0.00%</span>'
+        return '<span style="color:#94a3b8;font-weight:600;font-size:10px;">±0.00%</span>'
     sym = "▲" if chg > 0 else "▼"
     clr = "#dc2626" if chg > 0 else "#16a34a"
     return f'<span style="color:{clr};font-weight:600;font-size:10px;">{sym}{abs(chg):.2f}%</span>'
@@ -205,29 +205,36 @@ def _box_bond_rates(bonds, rate_history):
 
 
 def _box_securitization(pf_rates, cp_rates):
-    """Box B — CP 등급별 금리"""
+    """Box B — 주요 건설사 신용등급"""
 
-    def rate_s(v):
-        if v and str(v).strip():
-            try:
-                return f"{float(v):.2f}%", "#b45309"
-            except ValueError:
-                pass
-        return "입력 필요", "#d1d5db"
+    def grade_color(g):
+        g = str(g).strip()
+        if g.startswith("AA"):  return "#1e40af", "#dbeafe"
+        if g.startswith("A+"):  return "#065f46", "#d1fae5"
+        if g in ("A", "A-"):    return "#92400e", "#fef3c7"
+        if g.startswith("BBB"): return "#7c2d12", "#fee2e2"
+        return "#374151", "#f3f4f6"
 
-    cp_rows = ""
+    rows = ""
     for r in cp_rates:
-        grade = r.get("grade", "")
-        t3m_s, fg3 = rate_s(r.get("tenor_3m", ""))
-        t1y_s, fg1 = rate_s(r.get("tenor_1y", ""))
-        cp_rows += f"""
-<tr style="border-bottom:1px solid #e0e7ff;">
-  <td style="padding:3px 6px;font-size:9px;font-weight:700;color:#1e3a8a;">{grade}</td>
-  <td style="padding:3px 6px;font-size:9px;color:{fg3};text-align:right;">{t3m_s}</td>
-  <td style="padding:3px 6px;font-size:9px;color:{fg1};text-align:right;">{t1y_s}</td>
+        rank    = r.get("rank", "")
+        company = r.get("company", "")
+        cg      = r.get("corp_grade", "입력필요")
+        pg      = r.get("cp_grade",   "입력필요")
+        note    = r.get("note", "")
+        name_s  = f'{company}<span style="font-size:8px;color:#94a3b8;margin-left:2px;">{note}</span>' if note else company
+        cfg, cbg = grade_color(cg)
+        pfg, pbg = grade_color(pg)
+        rows += f"""
+<tr style="border-bottom:1px solid #f3f4f6;">
+  <td style="padding:3px 5px;font-size:8px;color:#94a3b8;text-align:center;white-space:nowrap;">{rank}</td>
+  <td style="padding:3px 5px;font-size:9px;color:#374151;white-space:nowrap;">{name_s}</td>
+  <td style="padding:3px 5px;font-size:9px;font-weight:700;color:{cfg};background:{cbg};text-align:center;white-space:nowrap;">{cg}</td>
+  <td style="padding:3px 5px;font-size:9px;font-weight:700;color:{pfg};background:{pbg};text-align:center;white-space:nowrap;">{pg}</td>
 </tr>"""
-    if not cp_rows:
-        cp_rows = '<tr><td colspan="3" style="padding:6px;font-size:9px;color:#94a3b8;">cp_rates.csv 업데이트 필요</td></tr>'
+
+    if not rows:
+        rows = '<tr><td colspan="4" style="padding:6px;font-size:9px;color:#94a3b8;">cp_rates.csv 업데이트 필요</td></tr>'
 
     today = datetime.date.today().strftime("%Y-%m-%d")
 
@@ -237,16 +244,17 @@ def _box_securitization(pf_rates, cp_rates):
     <span style="font-size:11px;font-weight:800;color:#fff;">B. 유동화증권</span>
     <span style="font-size:9px;color:#fcd34d;">{badge('manual')} CSV</span>
   </div>
-  <div style="font-size:9px;color:#1e3a8a;padding:4px 6px;background:#e0e7ff;font-weight:700;">
-    CP 등급별 금리 &nbsp;·&nbsp; 기준일 {today}
+  <div style="font-size:9px;color:#92400e;padding:4px 6px;background:#fef9c3;font-weight:700;">
+    주요 건설사 신용등급 &nbsp;·&nbsp; 기준일 {today}
   </div>
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ff;">
-    <tr style="background:#e0e7ff;">
-      <th style="padding:3px 6px;font-size:9px;color:#3730a3;text-align:left;font-weight:700;">등급</th>
-      <th style="padding:3px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">3M</th>
-      <th style="padding:3px 6px;font-size:9px;color:#3730a3;text-align:right;font-weight:700;">1Y</th>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;table-layout:fixed;">
+    <tr style="background:#fef3c7;">
+      <th style="width:10%;padding:3px 5px;font-size:9px;color:#92400e;text-align:center;font-weight:700;">순위</th>
+      <th style="padding:3px 5px;font-size:9px;color:#92400e;text-align:left;font-weight:700;">건설사</th>
+      <th style="width:22%;padding:3px 5px;font-size:9px;color:#92400e;text-align:center;font-weight:700;">회사채</th>
+      <th style="width:22%;padding:3px 5px;font-size:9px;color:#92400e;text-align:center;font-weight:700;">단기CP</th>
     </tr>
-    {cp_rows}
+    {rows}
   </table>
 </div>"""
 
