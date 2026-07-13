@@ -16,6 +16,10 @@ on:
           - send
           - diagnose
 
+permissions:
+  contents: write   # ← 추가: 자동수집된 CSV를 레포에 커밋하기 위해 필요
+  models: read      # ← 추가: GitHub Models 무료 LLM 사용 (별도 키·비용 없음)
+
 jobs:
   daily-report:
     runs-on: ubuntu-latest
@@ -25,6 +29,8 @@ jobs:
       ECOS_API_KEY:        ${{ secrets.ECOS_API_KEY }}
       NAVER_CLIENT_ID:     ${{ secrets.NAVER_CLIENT_ID }}
       NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}   # (선택) 미설정 시 GitHub Models 무료 사용
+      GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}        # ← 추가: GitHub Models 무료 LLM 인증
       EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
       EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
       EMAIL_RECIPIENTS:    ${{ secrets.EMAIL_RECIPIENTS }}
@@ -61,3 +67,13 @@ jobs:
           else
             python main.py
           fi
+
+      # ← 추가: 자동수집으로 갱신된 CSV를 레포에 반영 (다음 실행에서 중복 방지의 기준이 됨)
+      - name: 자동수집 CSV 커밋
+        if: github.event.inputs.mode != 'diagnose'
+        run: |
+          git config user.name  "pf-daily-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add manual_data/deal_watch.csv manual_data/credit_ratings.csv
+          git diff --cached --quiet || git commit -m "auto: 딜/신용등급 자동수집 $(date +%Y-%m-%d)"
+          git push

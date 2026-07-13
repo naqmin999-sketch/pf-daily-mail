@@ -37,6 +37,17 @@ def run():
 
     if not args.only_report:
         print("=" * 55)
+        print("  [0단계] 딜/신용등급 자동수집 (AI)")
+        print("=" * 55)
+        try:
+            from scripts.auto_collect import collect_deals, collect_ratings
+            collect_deals()
+            collect_ratings()
+        except Exception as e:
+            print(f"  ⚠ 자동수집 실패 — 리포트는 계속 진행: {e}")
+
+        print()
+        print("=" * 55)
         print("  [1단계] 데이터 수집")
         print("=" * 55)
         data = collect_all()

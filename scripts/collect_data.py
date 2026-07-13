@@ -145,25 +145,36 @@ def fetch_ecos(stat_code, cycle, item_code, label):
                 "source": "한국은행 ECOS", "type": "auto", "error": str(e)}
 
 
-def fetch_ecos_history(stat_code, cycle, item_code, days=400):
-    """최근 N일 시계열 [(date_str, float), ...] — 추이 차트용 (1년 기본)"""
+def fetch_ecos_history(stat_code, cycle, item_code, days=400, retries=3):
+    """최근 N일 시계열 [(date_str, float), ...] — 추이 차트용 (1년 기본)
+    실패 시 재시도(백오프) — 새벽 배치 시간대 ECOS 간헐 지연 대응"""
     if not ECOS_API_KEY:
+        print("  ⚠ ECOS_API_KEY 미설정 — 추이 이력 생략")
         return []
     end   = datetime.date.today()
     start = end - datetime.timedelta(days=days)
-    url = (f"{ECOS_BASE}/{ECOS_API_KEY}/json/kr/1/300/{stat_code}/{cycle}"
+    url = (f"{ECOS_BASE}/{ECOS_API_KEY}/json/kr/1/600/{stat_code}/{cycle}"
            f"/{start.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{item_code}")
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        rows = r.json().get("StatisticSearch", {}).get("row", [])
-        return [
-            (row["TIME"], float(row["DATA_VALUE"]))
-            for row in rows
-            if row.get("DATA_VALUE") and row["DATA_VALUE"].strip()
-        ]
-    except Exception:
-        return []
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, timeout=20)
+            r.raise_for_status()
+            body = r.json()
+            rows = body.get("StatisticSearch", {}).get("row", [])
+            if not rows and "RESULT" in body:  # ECOS 에러 응답(키 오류 등)
+                raise RuntimeError(body["RESULT"].get("MESSAGE", "ECOS 응답 오류"))
+            return [
+                (row["TIME"], float(row["DATA_VALUE"]))
+                for row in rows
+                if row.get("DATA_VALUE") and row["DATA_VALUE"].strip()
+            ]
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(2 * attempt)
+    print(f"  ⚠ ECOS 이력 수집 실패({stat_code}/{item_code}): {last_err}")
+    return []
 
 
 def collect_bonds():
@@ -280,7 +291,9 @@ def load_cofix():
 
 
 def load_deal_watch():
-    return [{**r, "source": "manual_data/deal_watch.csv", "type": "manual"}
+    # 주의: CSV의 type(도시정비/PF/브릿지론)·source(언론사)를 보존해야
+    # 리포트 ④의 구분 배지와 출처가 올바르게 표시됨
+    return [{**r, "data_source": "manual_data/deal_watch.csv", "data_type": "manual"}
             for r in _load_csv("deal_watch.csv")]
 
 
