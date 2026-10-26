@@ -85,7 +85,7 @@ jobs:
         run: |
           git config user.name  "pf-daily-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add manual_data/deal_watch.csv manual_data/credit_ratings.csv
+          git add manual_data/deal_watch.csv manual_data/credit_ratings.csv manual_data/cofix.csv
           git add manual_data/deal_history.csv 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "auto: 딜/신용등급 자동수집 $(date +%Y-%m-%d)"
+          git diff --cached --quiet || git commit -m "auto: 딜/신용등급/COFIX 자동수집 $(date +%Y-%m-%d)"
           git push

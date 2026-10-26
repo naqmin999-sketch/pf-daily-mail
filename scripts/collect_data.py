@@ -372,6 +372,60 @@ def collect_policy_news():
 # 은행연합회 portal.kfb.or.kr는 IP 차단으로 접근 불가 →
 # 우리은행 COFIX 고시 페이지 (spot.wooribank.com) 로 대체
 
+KFB_COFIX_URL = os.getenv("KFB_COFIX_URL", "https://portal.kfb.or.kr/fingoods/cofix.php")
+
+
+def _parse_kfb_cofix_text(text):
+    """은행연합회 'COFIX 공시' 화면 텍스트에서 4종 COFIX 추출.
+    예) '신규취급액기준 COFIX 공시일 : 2026. 10. 15. 3.43% 다음 공시일 : ...'"""
+    text = re.sub(r"\s+", " ", text or "")
+    out = {}
+    for key, label in (("new_all_rate", "신규취급액기준"), ("balance_rate", "잔액기준"),
+                       ("new_balance_rate", "신 ?잔액기준"), ("short_rate", "단기")):
+        # '잔액기준'이 '신 잔액기준' 안에서 잡히지 않도록 앞 글자가 '신 '가 아닌 경우만
+        prefix = r"(?<!신 )(?<!신)" if key == "balance_rate" else ""
+        m = re.search(prefix + label + r"\s*COFIX\s*공시일\s*:\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.?\s*([\d.]+)\s*%", text)
+        if m:
+            out[key] = float(m.group(4))
+            out.setdefault("_dates", {})[key] = f"{m.group(1)}.{int(m.group(2)):02d}.{int(m.group(3)):02d}"
+    return out
+
+
+def collect_cofix_from_kfb():
+    """은행연합회 COFIX 공시 페이지 (공식 출처). 성공 시 dict, 실패 시 None."""
+    from bs4 import BeautifulSoup
+    text = ""
+    try:  # 1) 정적 HTML 시도
+        r = requests.get(KFB_COFIX_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r.encoding = r.apparent_encoding or "utf-8"
+        text = BeautifulSoup(r.text, "html.parser").get_text(" ")
+    except Exception as e:
+        print(f"  ⚠ 은행연합회 COFIX 요청 실패: {e}")
+    vals = _parse_kfb_cofix_text(text)
+    if not vals.get("new_all_rate"):
+        try:  # 2) 스크립트로 그리는 페이지면 브라우저로 렌더링
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as pw:
+                b = pw.chromium.launch(headless=True); pg = b.new_page()
+                pg.goto(KFB_COFIX_URL, timeout=30000); pg.wait_for_load_state("networkidle", timeout=20000)
+                vals = _parse_kfb_cofix_text(pg.inner_text("body")); b.close()
+        except Exception as e:
+            print(f"  ⚠ 은행연합회 COFIX 렌더링 실패: {e}")
+    if not vals.get("new_all_rate"):
+        return None
+    d = vals["_dates"]["new_all_rate"]
+    short = f" · 단기 {vals['short_rate']:.2f}% ({vals['_dates']['short_rate']})" if vals.get("short_rate") else ""
+    return {
+        "ym":               d[:4] + "-" + d[5:7],
+        "new_all_rate":     vals.get("new_all_rate"),
+        "balance_rate":     vals.get("balance_rate"),
+        "new_balance_rate": vals.get("new_balance_rate"),
+        "note":             f"은행연합회 공시 {d}{short}",
+        "source":           "은행연합회 COFIX 공시",
+        "type":             "auto",
+    }
+
+
 def collect_cofix_from_woori():
     """
     우리은행 COFIX 고시 페이지에서 최신 값 수집 (Playwright headless).
@@ -542,9 +596,9 @@ def _save_cofix_to_csv(cofix_auto):
         for row in existing:
             if row["ym"] == cofix_auto["ym"]:
                 for k in ("new_all_rate", "balance_rate", "new_balance_rate"):
-                    if not row.get(k) and new_row[k]:
+                    if new_row[k]:
                         row[k] = new_row[k]
-                if not row.get("note") and new_row["note"]:
+                if new_row["note"]:
                     row["note"] = new_row["note"]
         updated = existing
     else:
@@ -583,7 +637,9 @@ def collect_all():
     company_credit = load_credit_ratings()
 
     # COFIX: 우리은행 고시 페이지 자동수집 → CSV 저장 → 실패 시 CSV fallback
-    cofix_auto = collect_cofix_from_woori()
+    cofix_auto = collect_cofix_from_kfb() or collect_cofix_from_woori()
+    if not cofix_auto:
+        print("::warning title=COFIX 자동수집 실패::은행연합회·우리은행 모두 실패 — manual_data/cofix.csv 값 사용")
     if cofix_auto:
         _save_cofix_to_csv(cofix_auto)          # 새 달이면 CSV에 자동 추가
     cofix_csv = load_cofix()                    # 저장 후 다시 로드
