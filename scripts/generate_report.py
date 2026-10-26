@@ -490,6 +490,67 @@ def html_top_3box(data):
 </td></tr>"""
 
 
+# ─── Section 1-2: ABCP 금리 동향 (주간 · 수기) ────────────────────
+
+def html_abcp_rates(data):
+    rows_in = data.get("abcp_rates", [])
+    if not rows_in:
+        return ""
+    as_of = rows_in[0].get("as_of_date", "")
+    TENORS = [("rate_3m", "chg_3m", "3개월물"), ("rate_6m", "chg_6m", "6개월물"), ("rate_1y", "chg_1y", "1년물")]
+    TH = 'style="padding:5px 6px;font-size:10px;color:#fff;background:#1e3a8a;font-weight:700;text-align:center;white-space:nowrap;"'
+    TD = "padding:4px 6px;font-size:11px;text-align:center;white-space:nowrap;border-bottom:1px solid #e2e8f0;"
+
+    def _num(v):
+        try:
+            return float(str(v).strip())
+        except (ValueError, TypeError):
+            return None
+
+    def _rate(v):
+        n = _num(v)
+        return f"{n:.2f}%" if n is not None else ""
+
+    def _chg(v):
+        n = _num(v)
+        if n is None:
+            return ""
+        if n == 0:
+            return '<span style="color:#94a3b8;">0.00%p</span>'
+        sym, clr = ("▲", "#dc2626") if n > 0 else ("▼", "#2563eb")
+        return f'<span style="color:{clr};font-weight:700;">{sym}{abs(n):.2f}%p</span>'
+
+    def _table(title, cell_fn):
+        head = "".join(f"<th {TH}>{lbl}</th>" for _, _, lbl in TENORS)
+        body = ""
+        for r in rows_in:
+            empty = all(_num(r.get(k)) is None for k, _, _ in TENORS)
+            bg = "#f1f5f9" if empty else "#fff"
+            cells = "".join(f'<td style="{TD}">{cell_fn(r, rk, ck)}</td>' for rk, ck, _ in TENORS)
+            body += (f'<tr style="background:{bg};">'
+                     f'<td style="{TD}text-align:left;font-weight:600;color:#0f172a;">{r.get("company","")}</td>'
+                     f'<td style="{TD}color:#475569;">{r.get("cp_grade","")}</td>{cells}</tr>')
+        return f"""
+<div style="flex:1;min-width:0;">
+  <div style="font-size:10px;font-weight:700;color:#1e3a8a;margin-bottom:4px;">{title}</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cbd5e1;border-collapse:collapse;">
+    <tr><th {TH.replace('text-align:center', 'text-align:left')}>구분</th><th {TH}>CP등급</th>{head}</tr>
+    {body}
+  </table>
+</div>"""
+
+    left  = _table(f"□ {as_of} 기준", lambda r, rk, ck: _rate(r.get(rk)))
+    right = _table("□ 전주 대비", lambda r, rk, ck: "" if _num(r.get(rk)) is None else _chg(r.get(ck)))
+    return f"""
+<tr><td style="background:#fff;padding:14px 22px;border-bottom:1px solid #e8edf4;">
+  {sec_header("", "ABCP 금리 동향 (주간)", "#1e3a8a")}
+  <div style="display:flex;gap:12px;align-items:flex-start;">{left}{right}</div>
+  <div style="font-size:9px;color:#94a3b8;margin-top:5px;">
+    {badge('manual')} MANUAL — manual_data/abcp_rates.csv 주 1회 수기 입력 · 기준일 {as_of}
+  </div>
+</td></tr>"""
+
+
 # ─── Section 2: 채권금리 추이 ─────────────────────────────────────
 
 def _hist_at(hist, days_ago):
@@ -657,6 +718,10 @@ def html_deal_watch(data):
         rmk    = d.get("remark", "")
         src    = d.get("source", "")
         aod    = d.get("as_of_date", "")
+        url    = (d.get("url") or "").strip()
+        if url.startswith("http"):
+            proj = (f'<a href="{url}" target="_blank" style="color:#1d4ed8;text-decoration:underline;">'
+                    f'{proj}</a> <span style="font-size:9px;color:#1d4ed8;">기사↗</span>')
 
         rows += f"""
 <tr style="border-bottom:1px solid #f1f5f9;">
@@ -697,7 +762,7 @@ def html_deal_watch(data):
     {rows}
   </table>
   <div style="font-size:9px;color:#94a3b8;margin-top:5px;">
-    {badge('manual')} MANUAL — manual_data/deal_watch.csv 직접 입력
+    {badge('manual')} 자동수집 + 수기 — 현장명 클릭 시 원문 기사로 이동 · 신규 딜 발견 시 과거 딜 자동 교체
   </div>
 </td></tr>"""
 
@@ -797,6 +862,7 @@ def build_html(data):
         html_header(data)         +
         html_exec_summary(data)   +
         html_top_3box(data)       +
+        html_abcp_rates(data)     +
         html_rate_charts(data)    +
         html_market_news(data)    +
         html_deal_watch(data)     +

@@ -15,6 +15,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+def _warn_if_empty(data):
+    """Executive Summary/시황 요약이 비게 되는 원인을 Actions 화면에 경고로 표시"""
+    bonds = data.get("bonds", {}) or {}
+    for key in ("gov_3y", "corp_aa_3y", "cd_91", "base_rate"):
+        b = bonds.get(key) or {}
+        if b.get("value") is None:
+            print(f"::warning title=금리 수집 실패({b.get('label', key)})::{b.get('error', '값 없음')}")
+    if not data.get("pf_news") and not data.get("policy_news"):
+        print("::warning title=뉴스 수집 0건::NAVER_CLIENT_ID/SECRET 또는 검색 키워드 확인")
+
+
 def run():
     parser = argparse.ArgumentParser(description="PF Daily Market Intelligence")
     parser.add_argument("--no-send",     action="store_true", help="이메일 발송 생략")
@@ -44,6 +55,7 @@ def run():
             collect_deals()
             collect_ratings()
         except Exception as e:
+            print(f"::warning title=자동수집 모듈 오류::{e}")
             print(f"  ⚠ 자동수집 실패 — 리포트는 계속 진행: {e}")
 
         print()
@@ -51,6 +63,7 @@ def run():
         print("  [1단계] 데이터 수집")
         print("=" * 55)
         data = collect_all()
+        _warn_if_empty(data)
     else:
         print("  [--only-report] 기존 data/latest_report.json 사용")
 
@@ -73,7 +86,10 @@ def run():
         print("=" * 55)
         print("  [4단계] 이메일 발송")
         print("=" * 55)
-        send_report(html_path, pdf_path)
+        if not send_report(html_path, pdf_path):
+            # 발송 실패를 '성공'으로 숨기지 않음 → Actions가 빨간불 + 실패 알림 메일
+            print("::error title=이메일 발송 실패::위 [ERROR] 로그 확인 (SMTP 비밀번호/수신자 설정)")
+            sys.exit(1)
     else:
         print(f"\n  [--no-send] 이메일 발송 생략")
         print(f"  HTML : {html_path}")

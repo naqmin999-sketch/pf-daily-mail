@@ -14,13 +14,15 @@ LLM 백엔드 (자동 선택):
 환경변수: NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, (선택) ANTHROPIC_API_KEY
 실패해도 예외를 밖으로 던지지 않고 로그만 남김 → 리포트 생성은 계속 진행
 """
-import csv, json, os, re, urllib.request, urllib.parse
+import csv, json, os, re, urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 KST = timezone(timedelta(hours=9))
 ROOT = Path(__file__).resolve().parent.parent
 DEALS_CSV = ROOT / "manual_data" / "deal_watch.csv"
+# 리포트에서 빠진 과거 딜 보관소 — 같은 딜이 다시 '신규'로 잡히지 않게 중복 판정에만 사용
+DEAL_HISTORY_CSV = ROOT / "manual_data" / "deal_history.csv"
 RATINGS_CSV = ROOT / "manual_data" / "credit_ratings.csv"
 
 CLAUDE_MODEL = os.environ.get("AUTO_COLLECT_MODEL", "claude-sonnet-4-6")
@@ -31,11 +33,30 @@ DEAL_QUERIES = ["본PF 약정", "PF 조달 완료", "브릿지론 본PF 전환",
 RATING_QUERIES = ["건설사 신용등급 하향", "건설사 신용등급 상향", "건설 등급전망 변경"]
 
 DEAL_FIELDS = ["type","party","borrower","guarantee_type","rate_pct","maturity",
-               "project_name","amount_bn","remark","as_of_date","source"]
+               "project_name","amount_bn","remark","as_of_date","source","url"]
 RATING_FIELDS = ["company","ticker","listed","rating","rating_date","outlook","rater","note"]
 
 
 # ── 외부 호출 ────────────────────────────────────────────────
+def _gh_warn(title, msg):
+    """GitHub Actions 화면(요약/주석)에 경고로 표시. 로컬에선 일반 출력."""
+    msg = str(msg).replace("\n", " ")[:900]
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::warning title={title}::{msg}")
+    else:
+        print(f"  ⚠ {title}: {msg}")
+
+
+def _open_json(req, timeout):
+    """urlopen + JSON. 실패 시 HTTP 상태코드와 응답 본문을 예외 메시지에 포함."""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"HTTP {e.code} {req.full_url.split('?')[0]} — {body}") from None
+
+
 def naver_news(query, display=15):
     cid, csec = os.environ.get("NAVER_CLIENT_ID"), os.environ.get("NAVER_CLIENT_SECRET")
     if not (cid and csec):
@@ -44,11 +65,12 @@ def naver_news(query, display=15):
            + urllib.parse.quote(query) + f"&display={display}&sort=date")
     req = urllib.request.Request(url, headers={
         "X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csec})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r).get("items", [])
+    return _open_json(req, 15).get("items", [])
 
 
-GITHUB_MODEL = os.environ.get("AUTO_COLLECT_GH_MODEL", "openai/gpt-4o")
+# 앞에서부터 시도. 한 모델이 단종·한도초과여도 다음 모델로 넘어감.
+GITHUB_MODELS = [m.strip() for m in os.environ.get(
+    "AUTO_COLLECT_GH_MODEL", "openai/gpt-4.1,openai/gpt-4o,openai/gpt-4.1-mini").split(",") if m.strip()]
 
 
 def _parse_json(text):
@@ -68,24 +90,30 @@ def llm_extract(prompt):
             "https://api.anthropic.com/v1/messages", data=body, method="POST",
             headers={"content-type": "application/json", "x-api-key": akey,
                      "anthropic-version": "2023-06-01"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            data = json.load(r)
+        data = _open_json(req, 60)
         return _parse_json("".join(b.get("text", "") for b in data.get("content", [])))
 
     gtoken = os.environ.get("GITHUB_TOKEN")
     if not gtoken:
         raise RuntimeError("ANTHROPIC_API_KEY도 GITHUB_TOKEN도 없음 — LLM 백엔드 불가")
-    body = json.dumps({
-        "model": GITHUB_MODEL, "max_tokens": 2000, "temperature": 0,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-    req = urllib.request.Request(
-        "https://models.github.ai/inference/chat/completions", data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {gtoken}"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = json.load(r)
-    return _parse_json(data["choices"][0]["message"]["content"])
+    errors = []
+    for model in GITHUB_MODELS:
+        body = json.dumps({
+            "model": model, "max_tokens": 2000, "temperature": 0,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode()
+        req = urllib.request.Request(
+            "https://models.github.ai/inference/chat/completions", data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {gtoken}"})
+        try:
+            data = _open_json(req, 60)
+            print(f"  [auto] LLM: GitHub Models {model}")
+            return _parse_json(data["choices"][0]["message"]["content"])
+        except Exception as e:
+            errors.append(f"{model}: {e}")
+            print(f"  [auto] {model} 실패 → 다음 모델 시도")
+    raise RuntimeError(" | ".join(errors))
 
 
 # 하위호환 별칭
@@ -148,7 +176,7 @@ DEAL_PROMPT = """다음은 한국 부동산 PF 관련 뉴스 목록입니다. �
 정책·시황·전망 기사, 단순 계획 단계는 제외합니다.
 
 각 딜을 아래 JSON 배열로만 응답하세요 (설명·마크다운 금지, 딜이 없으면 []):
-[{"type":"PF|브릿지론|도시정비 중 하나(본PF는 PF로 표기)","party":"시공사/주요 관련사 이름","borrower":"조달주체(SPC명 등)","guarantee_type":"보증형태(예: 시공사 책임준공)","rate_pct":"금리 숫자 또는 빈문자열","maturity":"YYYY-MM 또는 빈문자열","project_name":"사업장명(위치·규모 포함)","amount_bn":"조달금액(억원 단위 정수)","remark":"주관사·대주단·우발채무 등 핵심 요약 1문장","as_of_date":"약정일 YYYY-MM-DD(기사일 아님, 불명확하면 빈문자열)","source":"언론사명"}]
+[{"type":"PF|브릿지론|도시정비 중 하나(본PF는 PF로 표기)","party":"시공사/주요 관련사 이름","borrower":"조달주체(SPC명 등)","guarantee_type":"보증형태(예: 시공사 책임준공)","rate_pct":"금리 숫자 또는 빈문자열","maturity":"YYYY-MM 또는 빈문자열","project_name":"사업장명(위치·규모 포함)","amount_bn":"조달금액(억원 단위 정수)","remark":"주관사·대주단·우발채무 등 핵심 요약 1문장","as_of_date":"약정일 YYYY-MM-DD(기사일 아님, 불명확하면 빈문자열)","source":"언론사명","url":"해당 기사의 링크(목록 괄호 안 URL을 그대로 복사)"}]
 
 기사에 명시되지 않은 값은 빈 문자열로 두고, 추측하지 마세요. 금액이 '조' 단위면 억으로 환산하세요(1.5조→15000).
 
@@ -168,23 +196,31 @@ def collect_deals():
             print("  [auto] 최근 딜 후보 기사 없음"); return 0
         listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']} ({n['link']})" for n in news[:30])
         deals = llm_extract(DEAL_PROMPT.replace("{NEWS}", listing))
-        existing = _read_csv(DEALS_CSV)
-        added = 0
+        current = _read_csv(DEALS_CSV)
+        history = _read_csv(DEAL_HISTORY_CSV)
+        new_rows = []
         for d in deals:
             if not d.get("project_name") or not str(d.get("amount_bn", "")).strip():
                 continue
-            if is_dup_deal(d, existing):
+            if is_dup_deal(d, current + history + new_rows):
                 print(f"  [auto] 중복 스킵: {d['project_name'][:30]}"); continue
+            # 링크는 실제 검색된 기사 URL만 허용 (AI가 지어낸 주소 차단)
+            if d.get("url") not in seen:
+                d["url"] = ""
             d["remark"] = f"{TAG} {d.get('remark','')}".strip()
-            row = {k: str(d.get(k, "")) for k in DEAL_FIELDS}
-            existing.append(row); added += 1
+            new_rows.append({k: str(d.get(k, "")) for k in DEAL_FIELDS})
             print(f"  [auto] 딜 추가: {d['project_name'][:40]} / {d['amount_bn']}억")
-        if added:
-            _write_csv(DEALS_CSV, DEAL_FIELDS, existing)
-        print(f"  [auto] 딜 {added}건 반영")
-        return added
+        if new_rows:
+            # 신규 딜이 있으면: 기존(과거) 딜은 리포트에서 삭제 → 보관소로 이동, 신규 딜만 남김
+            # 신규 딜이 없으면: 기존 딜 그대로 유지 (리포트가 비지 않도록)
+            if current:
+                _write_csv(DEAL_HISTORY_CSV, DEAL_FIELDS, history + current)
+                print(f"  [auto] 과거 딜 {len(current)}건 리포트에서 삭제(보관소 이동)")
+            _write_csv(DEALS_CSV, DEAL_FIELDS, new_rows)
+        print(f"  [auto] 신규 딜 {len(new_rows)}건 반영")
+        return len(new_rows)
     except Exception as e:
-        print(f"  [auto] ⚠ 딜 수집 실패(리포트는 계속): {e}")
+        _gh_warn("딜 자동수집 실패", e)
         return 0
 
 
@@ -236,7 +272,7 @@ def collect_ratings():
         print(f"  [auto] 등급 {updated}건 반영")
         return updated
     except Exception as e:
-        print(f"  [auto] ⚠ 등급 수집 실패(리포트는 계속): {e}")
+        _gh_warn("신용등급 자동수집 실패", e)
         return 0
 
 

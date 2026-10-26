@@ -126,11 +126,14 @@ def fetch_ecos(stat_code, cycle, item_code, label):
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        rows = r.json().get("StatisticSearch", {}).get("row", [])
+        body = r.json()
+        rows = body.get("StatisticSearch", {}).get("row", [])
         if not rows:
+            # ECOS는 키 만료/오류도 HTTP 200 + RESULT 메시지로 돌려줌 → 그대로 보여줌
+            msg = body.get("RESULT", {}).get("MESSAGE") or "응답 없음 (item_code 미확인)"
             return {"value": None, "date": None, "label": label,
                     "source": "한국은행 ECOS", "type": "auto",
-                    "error": "응답 없음 (item_code 미확인)"}
+                    "error": msg}
         latest = rows[-1]
         raw    = latest.get("DATA_VALUE", "")
         return {
@@ -283,6 +286,12 @@ def load_pf_rates():
 def load_cp_rates():
     return [{**r, "source": "manual_data/cp_rates.csv", "type": "manual"}
             for r in _load_csv("cp_rates.csv")]
+
+
+def load_abcp_rates():
+    """ABCP 금리 동향 (주간 · 수기) — 건설사별 3M/6M/1Y 금리 + 전주 대비"""
+    return [{**r, "source": "manual_data/abcp_rates.csv", "type": "manual"}
+            for r in _load_csv("abcp_rates.csv")]
 
 
 def load_cofix():
@@ -569,6 +578,7 @@ def collect_all():
     print("[6/7] Manual CSV 로드 + COFIX 자동수집 중...")
     pf_rates       = load_pf_rates()
     cp_rates       = load_cp_rates()
+    abcp_rates     = load_abcp_rates()
     deal_watch     = load_deal_watch()
     company_credit = load_credit_ratings()
 
@@ -594,6 +604,7 @@ def collect_all():
         "usd_krw":        usd_krw,
         "pf_rates":       pf_rates,
         "cp_rates":       cp_rates,
+        "abcp_rates":     abcp_rates,
         "cofix":          cofix,
         "deal_watch":     deal_watch,
         "pf_news":        pf_news,
