@@ -33,7 +33,7 @@ DEAL_QUERIES = ["본PF 약정", "PF 조달 완료", "브릿지론 본PF 전환",
 RATING_QUERIES = ["건설사 신용등급 하향", "건설사 신용등급 상향", "건설 등급전망 변경"]
 
 DEAL_FIELDS = ["type","party","borrower","guarantee_type","rate_pct","maturity",
-               "project_name","amount_bn","remark","as_of_date","source"]
+               "project_name","amount_bn","remark","as_of_date","source","url"]
 RATING_FIELDS = ["company","ticker","listed","rating","rating_date","outlook","rater","note"]
 
 
@@ -176,7 +176,7 @@ DEAL_PROMPT = """다음은 한국 부동산 PF 관련 뉴스 목록입니다. �
 정책·시황·전망 기사, 단순 계획 단계는 제외합니다.
 
 각 딜을 아래 JSON 배열로만 응답하세요 (설명·마크다운 금지, 딜이 없으면 []):
-[{"type":"PF|브릿지론|도시정비 중 하나(본PF는 PF로 표기)","party":"시공사/주요 관련사 이름","borrower":"조달주체(SPC명 등)","guarantee_type":"보증형태(예: 시공사 책임준공)","rate_pct":"금리 숫자 또는 빈문자열","maturity":"YYYY-MM 또는 빈문자열","project_name":"사업장명(위치·규모 포함)","amount_bn":"조달금액(억원 단위 정수)","remark":"주관사·대주단·우발채무 등 핵심 요약 1문장","as_of_date":"약정일 YYYY-MM-DD(기사일 아님, 불명확하면 빈문자열)","source":"언론사명"}]
+[{"type":"PF|브릿지론|도시정비 중 하나(본PF는 PF로 표기)","party":"시공사/주요 관련사 이름","borrower":"조달주체(SPC명 등)","guarantee_type":"보증형태(예: 시공사 책임준공)","rate_pct":"금리 숫자 또는 빈문자열","maturity":"YYYY-MM 또는 빈문자열","project_name":"사업장명(위치·규모 포함)","amount_bn":"조달금액(억원 단위 정수)","remark":"주관사·대주단·우발채무 등 핵심 요약 1문장","as_of_date":"약정일 YYYY-MM-DD(기사일 아님, 불명확하면 빈문자열)","source":"언론사명","url":"해당 기사의 링크(목록 괄호 안 URL을 그대로 복사)"}]
 
 기사에 명시되지 않은 값은 빈 문자열로 두고, 추측하지 마세요. 금액이 '조' 단위면 억으로 환산하세요(1.5조→15000).
 
@@ -204,6 +204,9 @@ def collect_deals():
                 continue
             if is_dup_deal(d, current + history + new_rows):
                 print(f"  [auto] 중복 스킵: {d['project_name'][:30]}"); continue
+            # 링크는 실제 검색된 기사 URL만 허용 (AI가 지어낸 주소 차단)
+            if d.get("url") not in seen:
+                d["url"] = ""
             d["remark"] = f"{TAG} {d.get('remark','')}".strip()
             new_rows.append({k: str(d.get(k, "")) for k in DEAL_FIELDS})
             print(f"  [auto] 딜 추가: {d['project_name'][:40]} / {d['amount_bn']}억")

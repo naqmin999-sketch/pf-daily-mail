@@ -126,11 +126,14 @@ def fetch_ecos(stat_code, cycle, item_code, label):
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
-        rows = r.json().get("StatisticSearch", {}).get("row", [])
+        body = r.json()
+        rows = body.get("StatisticSearch", {}).get("row", [])
         if not rows:
+            # ECOS는 키 만료/오류도 HTTP 200 + RESULT 메시지로 돌려줌 → 그대로 보여줌
+            msg = body.get("RESULT", {}).get("MESSAGE") or "응답 없음 (item_code 미확인)"
             return {"value": None, "date": None, "label": label,
                     "source": "한국은행 ECOS", "type": "auto",
-                    "error": "응답 없음 (item_code 미확인)"}
+                    "error": msg}
         latest = rows[-1]
         raw    = latest.get("DATA_VALUE", "")
         return {

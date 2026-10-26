@@ -718,6 +718,10 @@ def html_deal_watch(data):
         rmk    = d.get("remark", "")
         src    = d.get("source", "")
         aod    = d.get("as_of_date", "")
+        url    = (d.get("url") or "").strip()
+        if url.startswith("http"):
+            proj = (f'<a href="{url}" target="_blank" style="color:#1d4ed8;text-decoration:underline;">'
+                    f'{proj}</a> <span style="font-size:9px;color:#1d4ed8;">기사↗</span>')
 
         rows += f"""
 <tr style="border-bottom:1px solid #f1f5f9;">
@@ -758,7 +762,7 @@ def html_deal_watch(data):
     {rows}
   </table>
   <div style="font-size:9px;color:#94a3b8;margin-top:5px;">
-    {badge('manual')} MANUAL — manual_data/deal_watch.csv 직접 입력
+    {badge('manual')} 자동수집 + 수기 — 현장명 클릭 시 원문 기사로 이동 · 신규 딜 발견 시 과거 딜 자동 교체
   </div>
 </td></tr>"""
 
