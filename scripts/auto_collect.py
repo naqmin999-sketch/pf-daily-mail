@@ -21,6 +21,8 @@ from pathlib import Path
 KST = timezone(timedelta(hours=9))
 ROOT = Path(__file__).resolve().parent.parent
 DEALS_CSV = ROOT / "manual_data" / "deal_watch.csv"
+# 리포트에서 빠진 과거 딜 보관소 — 같은 딜이 다시 '신규'로 잡히지 않게 중복 판정에만 사용
+DEAL_HISTORY_CSV = ROOT / "manual_data" / "deal_history.csv"
 RATINGS_CSV = ROOT / "manual_data" / "credit_ratings.csv"
 
 CLAUDE_MODEL = os.environ.get("AUTO_COLLECT_MODEL", "claude-sonnet-4-6")
@@ -194,21 +196,26 @@ def collect_deals():
             print("  [auto] 최근 딜 후보 기사 없음"); return 0
         listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']} ({n['link']})" for n in news[:30])
         deals = llm_extract(DEAL_PROMPT.replace("{NEWS}", listing))
-        existing = _read_csv(DEALS_CSV)
-        added = 0
+        current = _read_csv(DEALS_CSV)
+        history = _read_csv(DEAL_HISTORY_CSV)
+        new_rows = []
         for d in deals:
             if not d.get("project_name") or not str(d.get("amount_bn", "")).strip():
                 continue
-            if is_dup_deal(d, existing):
+            if is_dup_deal(d, current + history + new_rows):
                 print(f"  [auto] 중복 스킵: {d['project_name'][:30]}"); continue
             d["remark"] = f"{TAG} {d.get('remark','')}".strip()
-            row = {k: str(d.get(k, "")) for k in DEAL_FIELDS}
-            existing.append(row); added += 1
+            new_rows.append({k: str(d.get(k, "")) for k in DEAL_FIELDS})
             print(f"  [auto] 딜 추가: {d['project_name'][:40]} / {d['amount_bn']}억")
-        if added:
-            _write_csv(DEALS_CSV, DEAL_FIELDS, existing)
-        print(f"  [auto] 딜 {added}건 반영")
-        return added
+        if new_rows:
+            # 신규 딜이 있으면: 기존(과거) 딜은 리포트에서 삭제 → 보관소로 이동, 신규 딜만 남김
+            # 신규 딜이 없으면: 기존 딜 그대로 유지 (리포트가 비지 않도록)
+            if current:
+                _write_csv(DEAL_HISTORY_CSV, DEAL_FIELDS, history + current)
+                print(f"  [auto] 과거 딜 {len(current)}건 리포트에서 삭제(보관소 이동)")
+            _write_csv(DEALS_CSV, DEAL_FIELDS, new_rows)
+        print(f"  [auto] 신규 딜 {len(new_rows)}건 반영")
+        return len(new_rows)
     except Exception as e:
         _gh_warn("딜 자동수집 실패", e)
         return 0
