@@ -84,6 +84,21 @@ _NEWS_EXCLUDE = [
     "해외기업", "미국채", "미 국채",
     "AI에 투자", "AI로 투자", "AI투자", "벤처캐피털화",
     "핀테크 투자", "첨단기술 투자",
+    # 종교·집회·단체 행사 등 비(非)정책 기사
+    "기도", "교회", "선교", "목사", "에스더", "종교", "집회", "시위", "궐기",
+    # 업계 이슈성 기사 (정책 아님)
+    "분양대행", "정의조차",
+    # 형식상 제외
+    "[포토]", "[사진]", "[인사]", "[부고]", "[칼럼]", "[사설]", "[기고]", "오피니언", "운세",
+]
+
+# 정책 뉴스는 '제목'에 아래 중 하나가 있어야 채택 (본문 언급만으로는 제외)
+_POLICY_TITLE_KWS = [
+    "국토부", "국토교통부", "금융위", "금감원", "기재부", "정부", "당국", "대통령실",
+    "대책", "규제", "완화", "강화", "개정", "법안", "시행령", "발표", "추진",
+    "가계대출", "주담대", "DSR", "LTV", "전세대출", "대출 한도",
+    "HUG", "주택도시보증", "주택도시기금", "공급", "청약", "분양가", "미분양",
+    "전세사기", "임대차", "세제", "취득세", "양도세", "종부세", "PF",
 ]
 
 _NEWS_INCLUDE_PF = [
@@ -102,10 +117,13 @@ _NEWS_INCLUDE_POLICY = [
 
 def _news_relevant(article, include_kws):
     """제외 키워드 없고 포함 키워드 하나 이상 있으면 True"""
-    text = article.get("title", "") + " " + article.get("desc", "")
+    title = article.get("title", "")
+    text = title + " " + article.get("desc", "")
     for kw in _NEWS_EXCLUDE:
         if kw in text:
             return False
+    if include_kws is _NEWS_INCLUDE_POLICY and not any(k in title for k in _POLICY_TITLE_KWS):
+        return False
     for kw in include_kws:
         if kw in text:
             return True
@@ -343,29 +361,29 @@ def fetch_naver_news(keyword, display=5):
 def collect_pf_news():
     candidates, seen = [], set()
     for kw in PF_KEYWORDS:
-        for art in fetch_naver_news(kw, display=3):
+        for art in fetch_naver_news(kw, display=6):
             if art["title"] not in seen:
                 seen.add(art["title"])
                 candidates.append(art)
         time.sleep(0.2)
-        if len(candidates) >= 18:
+        if len(candidates) >= 40:
             break
     relevant = [a for a in candidates if _news_relevant(a, _NEWS_INCLUDE_PF)]
-    return (relevant if relevant else candidates)[:3]
+    return relevant[:3]  # 무관한 기사로 채우지 않음 (없으면 '관련 뉴스 없음')
 
 
 def collect_policy_news():
     candidates, seen = [], set()
     for kw in POLICY_KEYWORDS:
-        for art in fetch_naver_news(kw, display=3):
+        for art in fetch_naver_news(kw, display=6):
             if art["title"] not in seen:
                 seen.add(art["title"])
                 candidates.append(art)
         time.sleep(0.2)
-        if len(candidates) >= 18:
+        if len(candidates) >= 40:
             break
     relevant = [a for a in candidates if _news_relevant(a, _NEWS_INCLUDE_POLICY)]
-    return (relevant if relevant else candidates)[:3]
+    return relevant[:3]  # 무관한 기사로 채우지 않음 (없으면 '관련 뉴스 없음')
 
 
 # ─── 우리은행 COFIX 자동수집 (Playwright) ────────────────────────
