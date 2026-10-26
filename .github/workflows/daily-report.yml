@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 모드 (send: 전체 파이프라인 / diagnose: 연결 진단만)'
+        description: '실행 모드 (send: 전체 파이프라인 / test: 메일 발송 없이 수집·리포트만 / diagnose: 연결 진단만)'
         required: false
         default: 'send'
         type: choice
         options:
           - send
+          - test
           - diagnose
 
 permissions:
@@ -74,6 +75,8 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.mode }}" = "diagnose" ]; then
             python main.py --diagnose
+          elif [ "${{ github.event.inputs.mode }}" = "test" ]; then
+            python main.py --no-send
           else
             python main.py
           fi

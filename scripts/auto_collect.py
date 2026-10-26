@@ -26,7 +26,7 @@ DEAL_HISTORY_CSV = ROOT / "manual_data" / "deal_history.csv"
 RATINGS_CSV = ROOT / "manual_data" / "credit_ratings.csv"
 
 CLAUDE_MODEL = os.environ.get("AUTO_COLLECT_MODEL", "claude-sonnet-4-6")
-LOOKBACK_DAYS = int(os.environ.get("AUTO_COLLECT_LOOKBACK_DAYS", "2"))
+LOOKBACK_DAYS = int(os.environ.get("AUTO_COLLECT_LOOKBACK_DAYS", "7"))
 TAG = "[자동수집·검증필요]"
 
 DEAL_QUERIES = ["본PF 약정", "PF 조달 완료", "브릿지론 본PF 전환", "PF 주관 증권"]
@@ -74,8 +74,28 @@ GITHUB_MODELS = [m.strip() for m in os.environ.get(
 
 
 def _parse_json(text):
-    text = re.sub(r"^```(json)?|```$", "", (text or "").strip(), flags=re.M).strip()
-    return json.loads(text) if text else []
+    """AI 응답에서 JSON 배열 추출. 앞뒤 설명문·코드블록·{"deals":[...]} 형태도 허용."""
+    raw = (text or "").strip()
+    t = re.sub(r"```(?:json)?", "", raw).strip()
+    if not t:
+        return []
+    try:
+        val = json.loads(t)
+    except ValueError:
+        # 설명문 사이에 섞인 [ ... ] 또는 { ... } 덩어리만 잘라서 재시도
+        for open_c, close_c in (("[", "]"), ("{", "}")):
+            i, j = t.find(open_c), t.rfind(close_c)
+            if i != -1 and j > i:
+                try:
+                    val = json.loads(t[i:j + 1]); break
+                except ValueError:
+                    continue
+        else:
+            raise ValueError(f"JSON 아님 — 응답 앞부분: {raw[:150]!r}")
+    if isinstance(val, dict):  # {"deals":[...]} / 단일 객체
+        lists = [v for v in val.values() if isinstance(v, list)]
+        val = lists[0] if lists else [val]
+    return val if isinstance(val, list) else []
 
 
 def llm_extract(prompt):
@@ -175,7 +195,8 @@ def is_dup_deal(new, existing_rows):
 DEAL_PROMPT = """다음은 한국 부동산 PF 관련 뉴스 목록입니다. 이 중 "실제로 성사/약정된 PF 자금조달 딜"만 추출하세요.
 정책·시황·전망 기사, 단순 계획 단계는 제외합니다.
 
-각 딜을 아래 JSON 배열로만 응답하세요 (설명·마크다운 금지, 딜이 없으면 []):
+응답은 반드시 '['로 시작해 ']'로 끝나는 JSON 배열 하나만 출력하세요. 인사말·설명·마크다운 금지. 딜이 없으면 [] 만 출력.
+각 딜 형식:
 [{"type":"PF|브릿지론|도시정비 중 하나(본PF는 PF로 표기)","party":"시공사/주요 관련사 이름","borrower":"조달주체(SPC명 등)","guarantee_type":"보증형태(예: 시공사 책임준공)","rate_pct":"금리 숫자 또는 빈문자열","maturity":"YYYY-MM 또는 빈문자열","project_name":"사업장명(위치·규모 포함)","amount_bn":"조달금액(억원 단위 정수)","remark":"주관사·대주단·우발채무 등 핵심 요약 1문장","as_of_date":"약정일 YYYY-MM-DD(기사일 아님, 불명확하면 빈문자열)","source":"언론사명","url":"해당 기사의 링크(목록 괄호 안 URL을 그대로 복사)"}]
 
 기사에 명시되지 않은 값은 빈 문자열로 두고, 추측하지 마세요. 금액이 '조' 단위면 억으로 환산하세요(1.5조→15000).
@@ -227,7 +248,7 @@ def collect_deals():
 # ── ② 신용등급 자동수집 ──────────────────────────────────────
 RATING_PROMPT = """다음은 건설사 신용등급 관련 뉴스 목록입니다. "실제 등급 또는 전망이 변경된 건"만 추출하세요.
 
-JSON 배열로만 응답 (없으면 []):
+응답은 반드시 '['로 시작해 ']'로 끝나는 JSON 배열 하나만 출력 (설명 금지, 없으면 []):
 [{"company":"회사명(정식명)","rating":"변경 후 등급(예: A+)","outlook":"안정적|긍정적|부정적","rating_date":"평가일 YYYY-MM-DD(불명확하면 빈문자열)","rater":"평가사(NICE신용평가|한국기업평가|한국신용평가)","summary":"변경 사유 1문장"}]
 
 기사에 명시되지 않은 값은 빈 문자열. 추측 금지.
