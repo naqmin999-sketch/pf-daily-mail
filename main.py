@@ -44,6 +44,7 @@ def run():
             collect_deals()
             collect_ratings()
         except Exception as e:
+            print(f"::warning title=자동수집 모듈 오류::{e}")
             print(f"  ⚠ 자동수집 실패 — 리포트는 계속 진행: {e}")
 
         print()
@@ -73,7 +74,10 @@ def run():
         print("=" * 55)
         print("  [4단계] 이메일 발송")
         print("=" * 55)
-        send_report(html_path, pdf_path)
+        if not send_report(html_path, pdf_path):
+            # 발송 실패를 '성공'으로 숨기지 않음 → Actions가 빨간불 + 실패 알림 메일
+            print("::error title=이메일 발송 실패::위 [ERROR] 로그 확인 (SMTP 비밀번호/수신자 설정)")
+            sys.exit(1)
     else:
         print(f"\n  [--no-send] 이메일 발송 생략")
         print(f"  HTML : {html_path}")

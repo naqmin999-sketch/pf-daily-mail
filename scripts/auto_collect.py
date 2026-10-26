@@ -14,7 +14,7 @@ LLM 백엔드 (자동 선택):
 환경변수: NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, (선택) ANTHROPIC_API_KEY
 실패해도 예외를 밖으로 던지지 않고 로그만 남김 → 리포트 생성은 계속 진행
 """
-import csv, json, os, re, urllib.request, urllib.parse
+import csv, json, os, re, urllib.request, urllib.parse, urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -36,6 +36,25 @@ RATING_FIELDS = ["company","ticker","listed","rating","rating_date","outlook","r
 
 
 # ── 외부 호출 ────────────────────────────────────────────────
+def _gh_warn(title, msg):
+    """GitHub Actions 화면(요약/주석)에 경고로 표시. 로컬에선 일반 출력."""
+    msg = str(msg).replace("\n", " ")[:900]
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::warning title={title}::{msg}")
+    else:
+        print(f"  ⚠ {title}: {msg}")
+
+
+def _open_json(req, timeout):
+    """urlopen + JSON. 실패 시 HTTP 상태코드와 응답 본문을 예외 메시지에 포함."""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"HTTP {e.code} {req.full_url.split('?')[0]} — {body}") from None
+
+
 def naver_news(query, display=15):
     cid, csec = os.environ.get("NAVER_CLIENT_ID"), os.environ.get("NAVER_CLIENT_SECRET")
     if not (cid and csec):
@@ -44,11 +63,12 @@ def naver_news(query, display=15):
            + urllib.parse.quote(query) + f"&display={display}&sort=date")
     req = urllib.request.Request(url, headers={
         "X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csec})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r).get("items", [])
+    return _open_json(req, 15).get("items", [])
 
 
-GITHUB_MODEL = os.environ.get("AUTO_COLLECT_GH_MODEL", "openai/gpt-4o")
+# 앞에서부터 시도. 한 모델이 단종·한도초과여도 다음 모델로 넘어감.
+GITHUB_MODELS = [m.strip() for m in os.environ.get(
+    "AUTO_COLLECT_GH_MODEL", "openai/gpt-4.1,openai/gpt-4o,openai/gpt-4.1-mini").split(",") if m.strip()]
 
 
 def _parse_json(text):
@@ -68,24 +88,30 @@ def llm_extract(prompt):
             "https://api.anthropic.com/v1/messages", data=body, method="POST",
             headers={"content-type": "application/json", "x-api-key": akey,
                      "anthropic-version": "2023-06-01"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            data = json.load(r)
+        data = _open_json(req, 60)
         return _parse_json("".join(b.get("text", "") for b in data.get("content", [])))
 
     gtoken = os.environ.get("GITHUB_TOKEN")
     if not gtoken:
         raise RuntimeError("ANTHROPIC_API_KEY도 GITHUB_TOKEN도 없음 — LLM 백엔드 불가")
-    body = json.dumps({
-        "model": GITHUB_MODEL, "max_tokens": 2000, "temperature": 0,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-    req = urllib.request.Request(
-        "https://models.github.ai/inference/chat/completions", data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {gtoken}"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = json.load(r)
-    return _parse_json(data["choices"][0]["message"]["content"])
+    errors = []
+    for model in GITHUB_MODELS:
+        body = json.dumps({
+            "model": model, "max_tokens": 2000, "temperature": 0,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode()
+        req = urllib.request.Request(
+            "https://models.github.ai/inference/chat/completions", data=body, method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {gtoken}"})
+        try:
+            data = _open_json(req, 60)
+            print(f"  [auto] LLM: GitHub Models {model}")
+            return _parse_json(data["choices"][0]["message"]["content"])
+        except Exception as e:
+            errors.append(f"{model}: {e}")
+            print(f"  [auto] {model} 실패 → 다음 모델 시도")
+    raise RuntimeError(" | ".join(errors))
 
 
 # 하위호환 별칭
@@ -184,7 +210,7 @@ def collect_deals():
         print(f"  [auto] 딜 {added}건 반영")
         return added
     except Exception as e:
-        print(f"  [auto] ⚠ 딜 수집 실패(리포트는 계속): {e}")
+        _gh_warn("딜 자동수집 실패", e)
         return 0
 
 
@@ -236,7 +262,7 @@ def collect_ratings():
         print(f"  [auto] 등급 {updated}건 반영")
         return updated
     except Exception as e:
-        print(f"  [auto] ⚠ 등급 수집 실패(리포트는 계속): {e}")
+        _gh_warn("신용등급 자동수집 실패", e)
         return 0
 
 
