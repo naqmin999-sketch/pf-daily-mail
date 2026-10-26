@@ -659,7 +659,7 @@ def html_market_news(data):
     policy_news = data.get("policy_news", [])
 
     return f"""
-<tr class="page-break-before"><td {SP}>
+<tr><td {SP}>
   {sec_header("③ ", "부동산 금융시장 및 정책 동향", "#ec4899")}
   <div style="display:flex;gap:14px;">
     <div style="flex:1;">
@@ -851,6 +851,11 @@ a:hover { text-decoration: underline; }
 table { border-collapse: collapse; }
 @media print {
   body { background: white !important; }
+  /* 섹션(①②③…)이 페이지 사이에서 잘리지 않게: 안 들어가면 섹션째 다음 페이지로.
+     강제 페이지 넘김은 쓰지 않아 여백이 생기지 않음 */
+  table.report > tbody > tr { break-inside: avoid; page-break-inside: avoid; }
+  /* 섹션이 한 페이지보다 길면 표의 행 단위로만 넘김 (행 중간 잘림 방지) */
+  table.report tr tr, table.report div[style*="border-bottom"] { break-inside: avoid; page-break-inside: avoid; }
   .page-break-before { page-break-before: always; break-before: page; }
   .no-break { page-break-inside: avoid; break-inside: avoid; }
 }
@@ -879,7 +884,7 @@ def build_html(data):
         '<table width="100%" cellpadding="0" cellspacing="0"'
         ' style="background:#f1f5f9;padding:16px 0;">\n'
         '  <tr><td align="center">\n'
-        '    <table width="720" cellpadding="0" cellspacing="0"\n'
+        '    <table class="report" width="720" cellpadding="0" cellspacing="0"\n'
         '     style="max-width:720px;box-shadow:0 4px 24px rgba(0,0,0,.12);border-radius:8px;">\n'
         + body +
         '    </table>\n'
