@@ -7,10 +7,10 @@ scripts/auto_collect.py — 딜/신용등급 자동수집 (완전 자동 · 검�
   · 신용등급: 기존 회사 행만 갱신 (등급/전망 변동 시)
   · 모든 자동 반영 건에는 "[자동수집·검증필요]" 태그가 note/remark에 붙음
 
-LLM 백엔드 (자동 선택):
-  · ANTHROPIC_API_KEY 있으면 → Claude API (유료·고정밀)
-  · 없으면 → GitHub Models (GITHUB_TOKEN, 무료) ← 기본. 워크플로에
-    permissions: models: read 필요. 추가 비용 없음.
+추출 방식 (자동 선택):
+  · ANTHROPIC_API_KEY 있으면 → Claude API로 구조화 추출 (고정밀)
+  · 없으면 → 규칙 기반 추출 (무료): 제목에 금액 + 본PF/약정/조달 키워드가 있는 기사만 딜로 채택
+  ※ GitHub Models(무료 AI)는 2026-07-30 GitHub이 서비스 종료 → 제거함
 환경변수: NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, (선택) ANTHROPIC_API_KEY
 실패해도 예외를 밖으로 던지지 않고 로그만 남김 → 리포트 생성은 계속 진행
 """
@@ -25,11 +25,12 @@ DEALS_CSV = ROOT / "manual_data" / "deal_watch.csv"
 DEAL_HISTORY_CSV = ROOT / "manual_data" / "deal_history.csv"
 RATINGS_CSV = ROOT / "manual_data" / "credit_ratings.csv"
 
-CLAUDE_MODEL = os.environ.get("AUTO_COLLECT_MODEL", "claude-sonnet-4-6")
+CLAUDE_MODEL = os.environ.get("AUTO_COLLECT_MODEL", "claude-sonnet-5-5")
 LOOKBACK_DAYS = int(os.environ.get("AUTO_COLLECT_LOOKBACK_DAYS", "7"))
 TAG = "[자동수집·검증필요]"
 
-DEAL_QUERIES = ["본PF 약정", "PF 조달 완료", "브릿지론 본PF 전환", "PF 주관 증권"]
+DEAL_QUERIES = ["본PF 약정", "PF 조달 완료", "브릿지론 본PF 전환", "PF 주관 증권",
+                "PF 대주단", "리파이낸싱 PF", "PF 금융약정 체결"]
 RATING_QUERIES = ["건설사 신용등급 하향", "건설사 신용등급 상향", "건설 등급전망 변경"]
 
 DEAL_FIELDS = ["type","party","borrower","guarantee_type","rate_pct","maturity",
@@ -63,7 +64,7 @@ def _open_json(req, timeout):
         raise RuntimeError(f"HTTP {e.code} {req.full_url.split('?')[0]} — {body}") from None
 
 
-def naver_news(query, display=15):
+def naver_news(query, display=30):
     cid, csec = os.environ.get("NAVER_CLIENT_ID"), os.environ.get("NAVER_CLIENT_SECRET")
     if not (cid and csec):
         raise RuntimeError("NAVER_CLIENT_ID/SECRET 미설정")
@@ -75,8 +76,6 @@ def naver_news(query, display=15):
 
 
 # 앞에서부터 시도. 한 모델이 단종·한도초과여도 다음 모델로 넘어감.
-GITHUB_MODELS = [m.strip() for m in os.environ.get(
-    "AUTO_COLLECT_GH_MODEL", "openai/gpt-4.1,openai/gpt-4o,openai/gpt-4.1-mini").split(",") if m.strip()]
 
 
 def _parse_json(text):
@@ -104,42 +103,65 @@ def _parse_json(text):
     return val if isinstance(val, list) else []
 
 
-def llm_extract(prompt):
-    """구조화 추출. ANTHROPIC_API_KEY 있으면 Claude, 없으면 GitHub Models(무료)."""
-    akey = os.environ.get("ANTHROPIC_API_KEY")
-    if akey:
-        body = json.dumps({
-            "model": CLAUDE_MODEL, "max_tokens": 2000,
-            "messages": [{"role": "user", "content": prompt}],
-        }).encode()
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages", data=body, method="POST",
-            headers={"content-type": "application/json", "x-api-key": akey,
-                     "anthropic-version": "2023-06-01"})
-        data = _open_json(req, 60)
-        return _parse_json("".join(b.get("text", "") for b in data.get("content", [])))
+class NoLLM(Exception):
+    """AI 키 없음 → 규칙 기반 추출로 대체"""
 
-    gtoken = os.environ.get("GITHUB_TOKEN")
-    if not gtoken:
-        raise RuntimeError("ANTHROPIC_API_KEY도 GITHUB_TOKEN도 없음 — LLM 백엔드 불가")
-    errors = []
-    for model in GITHUB_MODELS:
-        body = json.dumps({
-            "model": model, "max_tokens": 2000, "temperature": 0,
-            "messages": [{"role": "user", "content": prompt}],
-        }).encode()
-        req = urllib.request.Request(
-            "https://models.github.ai/inference/chat/completions", data=body, method="POST",
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {gtoken}"})
-        try:
-            data = _open_json(req, 60)
-            print(f"  [auto] LLM: GitHub Models {model}")
-            return _parse_json(data["choices"][0]["message"]["content"])
-        except Exception as e:
-            errors.append(f"{model}: {e}")
-            print(f"  [auto] {model} 실패 → 다음 모델 시도")
-    raise RuntimeError(" | ".join(errors))
+
+def llm_extract(prompt):
+    """Claude API 구조화 추출. 키 없으면 NoLLM."""
+    akey = os.environ.get("ANTHROPIC_API_KEY")
+    if not akey:
+        raise NoLLM()
+    body = json.dumps({
+        "model": CLAUDE_MODEL, "max_tokens": 2000,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body, method="POST",
+        headers={"content-type": "application/json", "x-api-key": akey,
+                 "anthropic-version": "2023-06-01"})
+    data = _open_json(req, 60)
+    return _parse_json("".join(b.get("text", "") for b in data.get("content", [])))
+
+
+# ── 규칙 기반 딜 추출 (AI 키 없을 때) ─────────────────────────────
+_AMT = re.compile(r"(\d+(?:\.\d+)?)\s*조(?:\s*(\d{1,4}(?:,\d{3})?)\s*억)?|(\d{1,3}(?:,\d{3})+|\d+)\s*억")
+_DEAL_KW = re.compile(r"본PF|브릿지론|PF\s*대출|PF\s*조달|리파이낸싱|대주단|금융약정|PF\s*약정|자금\s*조달")
+_DONE_KW = re.compile(r"약정|완료|확보|체결|성공|조달|전환|마무리|실행|주관")
+_SKIP_KW = re.compile(r"부실|연체|정책|전망|대책|시장\s*동향|감독|규제|금리\s*인상|우려|위기|사설|칼럼")
+
+
+def _amount_bn(text):
+    """'1조5000억'→15000, '3,500억'→3500 (억원 단위). 가장 큰 금액 채택."""
+    # '2천억'→'2000억', '5백억'→'500억', '1조5천억'→'1조5000억'
+    text = re.sub(r"(\d+(?:\.\d+)?)\s*천\s*억", lambda m: f"{int(float(m.group(1))*1000)}억", text)
+    text = re.sub(r"(\d+)\s*백\s*억", lambda m: f"{int(m.group(1))*100}억", text)
+    best = 0
+    for m in _AMT.finditer(text):
+        if m.group(1):
+            v = float(m.group(1)) * 10000 + (int(m.group(2).replace(",", "")) if m.group(2) else 0)
+        else:
+            v = int(m.group(3).replace(",", ""))
+        best = max(best, int(v))
+    return best
+
+
+def rule_extract_deals(news):
+    deals = []
+    for n in news:
+        title, desc = n["title"], n.get("desc", "")
+        if not (_DEAL_KW.search(title) and _DONE_KW.search(title)) or _SKIP_KW.search(title):
+            continue
+        amt = _amount_bn(title) or _amount_bn(desc)
+        if amt < 100:  # 100억 미만은 딜 기사로 보기 어려움
+            continue
+        dtype = "브릿지론" if "브릿지" in title else "PF"
+        src = urllib.parse.urlparse(n["link"]).netloc.replace("www.", "")
+        deals.append({"type": dtype, "party": "", "borrower": "", "guarantee_type": "",
+                      "rate_pct": "", "maturity": "", "project_name": title,
+                      "amount_bn": str(amt), "remark": desc[:80],
+                      "as_of_date": n["date"], "source": src, "url": n["link"]})
+    return deals
 
 
 # 하위호환 별칭
@@ -221,8 +243,12 @@ def collect_deals():
                     seen.add(it["link"]); news.append(it)
         if not news:
             print("  [auto] 최근 딜 후보 기사 없음"); return 0
-        listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']} ({n['link']})" for n in news[:30])
-        deals = llm_extract(DEAL_PROMPT.replace("{NEWS}", listing))
+        listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']} ({n['link']})" for n in news[:40])
+        try:
+            deals = llm_extract(DEAL_PROMPT.replace("{NEWS}", listing))
+        except NoLLM:
+            deals = rule_extract_deals(news)
+            print(f"  [auto] AI 키 없음 → 규칙 기반 추출: 후보 {len(news)}건 중 {len(deals)}건")
         current = _read_csv(DEALS_CSV)
         history = _read_csv(DEAL_HISTORY_CSV)
         new_rows = []
@@ -273,8 +299,12 @@ def collect_ratings():
                     seen.add(it["link"]); news.append(it)
         if not news:
             print("  [auto] 최근 등급 변동 기사 없음"); return 0
-        listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']}" for n in news[:30])
-        changes = llm_extract(RATING_PROMPT.replace("{NEWS}", listing))
+        listing = "\n".join(f"- [{n['date']}] {n['title']} — {n['desc']}" for n in news[:40])
+        try:
+            changes = llm_extract(RATING_PROMPT.replace("{NEWS}", listing))
+        except NoLLM:
+            print("  [auto] AI 키 없음 → 신용등급 자동갱신 생략 (credit_ratings.csv 수기 관리)")
+            return 0
         rows = _read_csv(RATINGS_CSV)
         by_name = {r["company"]: r for r in rows}
         updated = 0

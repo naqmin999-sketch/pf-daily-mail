@@ -19,7 +19,6 @@ on:
 
 permissions:
   contents: write   # ← 추가: 자동수집된 CSV를 레포에 커밋하기 위해 필요
-  models: read      # ← 추가: GitHub Models 무료 LLM 사용 (별도 키·비용 없음)
   actions: write    # ← 추가: 60일 무활동 시 스케줄 자동정지 방지(keepalive)
 
 jobs:
@@ -31,8 +30,7 @@ jobs:
       ECOS_API_KEY:        ${{ secrets.ECOS_API_KEY }}
       NAVER_CLIENT_ID:     ${{ secrets.NAVER_CLIENT_ID }}
       NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}   # (선택) 미설정 시 GitHub Models 무료 사용
-      GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}        # ← 추가: GitHub Models 무료 LLM 인증
+      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}   # (선택) 있으면 Claude로 정밀 추출, 없으면 규칙 기반
       EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
       EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
       EMAIL_RECIPIENTS:    ${{ secrets.EMAIL_RECIPIENTS }}
