@@ -126,9 +126,9 @@ def llm_extract(prompt):
 
 # ── 규칙 기반 딜 추출 (AI 키 없을 때) ─────────────────────────────
 _AMT = re.compile(r"(\d+(?:\.\d+)?)\s*조(?:\s*(\d{1,4}(?:,\d{3})?)\s*억)?|(\d{1,3}(?:,\d{3})+|\d+)\s*억")
-_DEAL_KW = re.compile(r"본PF|브릿지론|PF|리파이낸싱|대주단|금융약정")
+_DEAL_KW = re.compile(r"본PF|브릿지론|PF|리파이낸싱|대주단|금융약정|GPU|데이터센터|AI\s*금융")
 _DONE_KW = re.compile(r"약정|완료|확보|체결|성공|조달|전환|마무리|실행|주관")
-_SKIP_KW = re.compile(r"부실|연체|정책|전망|대책|시장\s*동향|감독|규제|금리\s*인상|우려|위기|사설|칼럼|GPU|AI\s*금융|데이터센터\s*펀드|공모|IPO")
+_SKIP_KW = re.compile(r"부실|연체|정책|전망|대책|시장\s*동향|감독|규제|금리\s*인상|우려|위기|사설|칼럼|공모|IPO")
 
 
 def _amount_bn(text):
@@ -153,13 +153,15 @@ def rule_extract_deals(news):
         if not (_DEAL_KW.search(title) and _DONE_KW.search(title)) or _SKIP_KW.search(title):
             continue
         amt = _amount_bn(title) or _amount_bn(desc)
-        if not 100 <= amt <= 50000:  # 100억 미만·5조 초과는 단일 PF딜로 보기 어려움(오추출 방지)
+        if amt < 100:  # 100억 미만은 딜 기사로 보기 어려움
             continue
+        # 5조 초과는 시장 전체 규모 등 오인 가능성 → 금액은 비우고 기사만 남김(링크로 확인)
+        amt_s = str(amt) if amt <= 50000 else ""
         dtype = "브릿지론" if "브릿지" in title else "PF"
         src = urllib.parse.urlparse(n["link"]).netloc.replace("www.", "")
         deals.append({"type": dtype, "party": "", "borrower": "", "guarantee_type": "",
                       "rate_pct": "", "maturity": "", "project_name": title,
-                      "amount_bn": str(amt), "remark": desc[:80],
+                      "amount_bn": amt_s, "remark": desc[:80],
                       "as_of_date": n["date"], "source": src, "url": n["link"]})
     return deals
 
@@ -253,7 +255,8 @@ def collect_deals():
         history = _read_csv(DEAL_HISTORY_CSV)
         new_rows = []
         for d in deals:
-            if not d.get("project_name") or not str(d.get("amount_bn", "")).strip():
+            # 금액이 없어도 기사 링크가 있으면 채택 (링크로 확인 가능)
+            if not d.get("project_name") or not (str(d.get("amount_bn", "")).strip() or d.get("url")):
                 continue
             if is_dup_deal(d, current + history + new_rows):
                 print(f"  [auto] 중복 스킵: {d['project_name'][:30]}"); continue
