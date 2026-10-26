@@ -146,17 +146,29 @@ def _amount_bn(text):
     return best
 
 
+MAX_DEALS = int(os.environ.get("AUTO_COLLECT_MAX_DEALS", "2"))
+
+
 def rule_extract_deals(news):
+    """검색어로 찾은 뉴스 중 딜 기사 최대 MAX_DEALS건.
+    1순위: 제목에 PF 키워드 + 약정/조달 등 + 금액 / 2순위(없는 날): 제목에 PF 키워드만 있는 최신 기사"""
+    strict = _rule_pick(news, strict=True)
+    if strict:
+        return strict[:MAX_DEALS]
+    return _rule_pick(news, strict=False)[:MAX_DEALS]
+
+
+def _rule_pick(news, strict):
     deals = []
-    for n in news:
+    for n in sorted(news, key=lambda x: x["date"], reverse=True):
         title, desc = n["title"], n.get("desc", "")
-        if not (_DEAL_KW.search(title) and _DONE_KW.search(title)) or _SKIP_KW.search(title):
+        if not _DEAL_KW.search(title) or _SKIP_KW.search(title):
             continue
         amt = _amount_bn(title) or _amount_bn(desc)
-        if amt < 100:  # 100억 미만은 딜 기사로 보기 어려움
+        if strict and (not _DONE_KW.search(title) or amt < 100):
             continue
         # 5조 초과는 시장 전체 규모 등 오인 가능성 → 금액은 비우고 기사만 남김(링크로 확인)
-        amt_s = str(amt) if amt <= 50000 else ""
+        amt_s = str(amt) if 100 <= amt <= 50000 else ""
         dtype = "브릿지론" if "브릿지" in title else "PF"
         src = urllib.parse.urlparse(n["link"]).netloc.replace("www.", "")
         deals.append({"type": dtype, "party": "", "borrower": "", "guarantee_type": "",
@@ -266,6 +278,7 @@ def collect_deals():
             d["remark"] = f"{TAG} {d.get('remark','')}".strip()
             new_rows.append({k: str(d.get(k, "")) for k in DEAL_FIELDS})
             print(f"  [auto] 딜 추가: {d['project_name'][:40]} / {d['amount_bn']}억")
+        new_rows = new_rows[:MAX_DEALS]
         if new_rows:
             # 신규 딜이 있으면: 기존(과거) 딜은 리포트에서 삭제 → 보관소로 이동, 신규 딜만 남김
             # 신규 딜이 없으면: 기존 딜 그대로 유지 (리포트가 비지 않도록)
