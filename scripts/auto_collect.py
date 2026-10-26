@@ -51,7 +51,13 @@ def _open_json(req, timeout):
     """urlopen + JSON. 실패 시 HTTP 상태코드와 응답 본문을 예외 메시지에 포함."""
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r)
+            raw = r.read()
+            try:
+                return json.loads(raw)
+            except ValueError:
+                raise RuntimeError(
+                    f"JSON 아닌 응답 HTTP {r.status} [{r.headers.get('Content-Type')}] "
+                    f"{req.full_url.split('?')[0]} — {raw[:200].decode('utf-8', 'replace')!r}") from None
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:300]
         raise RuntimeError(f"HTTP {e.code} {req.full_url.split('?')[0]} — {body}") from None
