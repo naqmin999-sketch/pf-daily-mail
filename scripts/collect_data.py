@@ -132,41 +132,39 @@ def _news_relevant(article, include_kws):
 
 # ─── ECOS API ─────────────────────────────────────────────────────
 
-def fetch_ecos(stat_code, cycle, item_code, label):
+def fetch_ecos(stat_code, cycle, item_code, label, retries=4):
+    """ECOS 최신값. 접속 지연/시간초과 시 재시도(3·6·12초 대기)."""
+    base = {"value": None, "date": None, "label": label,
+            "source": "한국은행 ECOS", "type": "auto"}
     if not ECOS_API_KEY:
-        return {"value": None, "date": None, "label": label,
-                "source": "한국은행 ECOS", "type": "auto",
-                "error": "API키 미설정 (.env → ECOS_API_KEY)"}
+        return {**base, "error": "API키 미설정 (.env → ECOS_API_KEY)"}
     end   = datetime.date.today()
     start = end - datetime.timedelta(days=8)
     url = (f"{ECOS_BASE}/{ECOS_API_KEY}/json/kr/1/10/{stat_code}/{cycle}"
            f"/{start.strftime('%Y%m%d')}/{end.strftime('%Y%m%d')}/{item_code}")
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        body = r.json()
-        rows = body.get("StatisticSearch", {}).get("row", [])
-        if not rows:
-            # ECOS는 키 만료/오류도 HTTP 200 + RESULT 메시지로 돌려줌 → 그대로 보여줌
-            msg = body.get("RESULT", {}).get("MESSAGE") or "응답 없음 (item_code 미확인)"
-            return {"value": None, "date": None, "label": label,
-                    "source": "한국은행 ECOS", "type": "auto",
-                    "error": msg}
-        latest = rows[-1]
-        raw    = latest.get("DATA_VALUE", "")
-        return {
-            "value":  float(raw) if raw and raw.strip() else None,
-            "date":   latest.get("TIME", ""),
-            "label":  label,
-            "source": "한국은행 ECOS",
-            "type":   "auto",
-        }
-    except Exception as e:
-        return {"value": None, "date": None, "label": label,
-                "source": "한국은행 ECOS", "type": "auto", "error": str(e)}
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, timeout=25)
+            r.raise_for_status()
+            body = r.json()
+            rows = body.get("StatisticSearch", {}).get("row", [])
+            if not rows:
+                # ECOS는 키 만료/오류도 HTTP 200 + RESULT 메시지로 돌려줌 → 재시도 없이 그대로 보여줌
+                msg = body.get("RESULT", {}).get("MESSAGE") or "응답 없음 (item_code 미확인)"
+                return {**base, "error": msg}
+            latest = rows[-1]
+            raw    = latest.get("DATA_VALUE", "")
+            return {**base, "value": float(raw) if raw and raw.strip() else None,
+                    "date": latest.get("TIME", "")}
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(3 * 2 ** (attempt - 1))
+    return {**base, "error": f"{retries}회 재시도 실패: {last_err}"}
 
 
-def fetch_ecos_history(stat_code, cycle, item_code, days=400, retries=3):
+def fetch_ecos_history(stat_code, cycle, item_code, days=400, retries=4):
     """최근 N일 시계열 [(date_str, float), ...] — 추이 차트용 (1년 기본)
     실패 시 재시도(백오프) — 새벽 배치 시간대 ECOS 간헐 지연 대응"""
     if not ECOS_API_KEY:
@@ -179,7 +177,7 @@ def fetch_ecos_history(stat_code, cycle, item_code, days=400, retries=3):
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            r = requests.get(url, timeout=20)
+            r = requests.get(url, timeout=30)
             r.raise_for_status()
             body = r.json()
             rows = body.get("StatisticSearch", {}).get("row", [])
@@ -631,6 +629,55 @@ def _save_cofix_to_csv(cofix_auto):
 
 # ─── 메인 수집 ────────────────────────────────────────────────────
 
+ECOS_CACHE = MANUAL_DIR / "ecos_cache.json"
+
+
+def _apply_ecos_cache(bonds, rate_history, usd_krw):
+    """성공한 값은 캐시에 저장, 실패한 값은 마지막 성공값으로 대체(FALLBACK 표시)."""
+    try:
+        cache = json.loads(ECOS_CACHE.read_text(encoding="utf-8")) if ECOS_CACHE.exists() else {}
+    except Exception:
+        cache = {}
+    cb, ch = cache.setdefault("bonds", {}), cache.setdefault("rate_history", {})
+    used = []
+
+    for key, b in list(bonds.items()):
+        if b.get("value") is not None:
+            if b.get("type") == "auto":
+                cb[key] = {k: b.get(k) for k in ("value", "date", "label", "source")}
+        elif key in cb:
+            bonds[key] = {**cb[key], "type": "fallback",
+                          "source": f"{cb[key].get('source', 'ECOS')} · 마지막 수집값({cb[key].get('date', '')})",
+                          "error": b.get("error")}
+            used.append(b.get("label") or key)
+
+    for key, hist in list(rate_history.items()):
+        if hist:
+            ch[key] = hist
+        elif ch.get(key):
+            rate_history[key] = ch[key]
+
+    if usd_krw and usd_krw.get("value") is not None:
+        cache["usd_krw"] = {k: usd_krw.get(k) for k in ("value", "date", "label", "source")}
+    elif cache.get("usd_krw"):
+        usd_krw = {**cache["usd_krw"], "type": "fallback"}
+        used.append("USD/KRW")
+
+    # 스프레드 재계산 (대체값 기준)
+    c, g = bonds.get("corp_aa_3y", {}).get("value"), bonds.get("gov_3y", {}).get("value")
+    if c is not None and g is not None and bonds.get("aa_spread", {}).get("value") is None:
+        bonds["aa_spread"] = {"value": round(c - g, 3), "label": "AA- 스프레드 (회사채3Y − 국고채3Y)",
+                              "source": "계산값(마지막 수집값 기준)", "type": "fallback"}
+
+    try:
+        ECOS_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"  ⚠ ECOS 캐시 저장 실패: {e}")
+    if used:
+        print(f"::warning title=금리 마지막 수집값 사용::ECOS 접속 실패로 직전 값 표시 — {', '.join(used)}")
+    return bonds, rate_history, usd_krw
+
+
 def collect_all():
     print("[1/7] 채권 금리 수집 중 (ECOS API)...")
     bonds = collect_bonds()
@@ -640,6 +687,7 @@ def collect_all():
 
     print("[3/7] 환율 수집 중...")
     usd_krw = collect_usd_krw()
+    bonds, rate_history, usd_krw = _apply_ecos_cache(bonds, rate_history, usd_krw)
 
     print("[4/7] PF/금융 뉴스 수집 중 (Naver)...")
     pf_news = collect_pf_news()
