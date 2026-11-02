@@ -16,6 +16,11 @@ on:
           - send
           - test
           - diagnose
+      to:
+        description: '(선택) 이번 수동 발송만 받는 사람 지정 — 쉼표로 구분. 비우면 등록된 수신자 전원'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write   # ← 추가: 자동수집된 CSV를 레포에 커밋하기 위해 필요
@@ -33,7 +38,7 @@ jobs:
       ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}   # (선택) 있으면 Claude로 정밀 추출, 없으면 규칙 기반
       EMAIL_SENDER:        ${{ secrets.EMAIL_SENDER }}
       EMAIL_PASSWORD:      ${{ secrets.EMAIL_PASSWORD }}
-      EMAIL_RECIPIENTS:    ${{ secrets.EMAIL_RECIPIENTS }}
+      EMAIL_RECIPIENTS:    ${{ github.event.inputs.to != '' && github.event.inputs.to || secrets.EMAIL_RECIPIENTS }}
       EMAIL_SMTP_HOST:     ${{ secrets.EMAIL_SMTP_HOST }}
       EMAIL_SMTP_PORT:     ${{ secrets.EMAIL_SMTP_PORT }}
       REPORT_TITLE:        "PF Daily Market Intelligence"
