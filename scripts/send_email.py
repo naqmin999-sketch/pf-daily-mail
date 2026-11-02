@@ -54,8 +54,8 @@ def send_report(html_path=None, pdf_path=None):
     msg["Subject"] = Header(f"[PF Daily] {today_str} 시황 브리핑 ({sent_at} 발송)", "utf-8")
     msg["From"]    = sender
     msg["To"]      = ", ".join(recipients)
-    msg["Message-ID"] = make_msgid(domain="pf-daily.local")
-    msg["X-Entity-Ref-ID"] = make_msgid()  # Gmail 스레드 묶음 방지
+    # 고유 ID는 보내는 주소의 도메인으로 (가짜 도메인은 스팸 판정 위험)
+    msg["Message-ID"] = make_msgid(domain=sender.split("@")[-1] if "@" in sender else None)
 
     alt = MIMEMultipart("alternative")
     plain = (
