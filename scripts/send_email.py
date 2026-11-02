@@ -10,6 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from email.header import Header
+from email.utils import make_msgid
 from io import BytesIO
 from email.generator import BytesGenerator
 from pathlib import Path
@@ -48,9 +49,13 @@ def send_report(html_path=None, pdf_path=None):
     today_str    = datetime.date.today().strftime("%Y년 %m월 %d일")
 
     msg = MIMEMultipart("mixed")
-    msg["Subject"] = Header(f"[PF Daily] {today_str} 시황 브리핑", "utf-8")
+    sent_at = datetime.datetime.now().strftime("%H:%M")
+    # 발송 시각을 제목에 넣어 같은 날 재발송해도 기존 메일 대화에 묶이지 않고 새 메일로 도착
+    msg["Subject"] = Header(f"[PF Daily] {today_str} 시황 브리핑 ({sent_at} 발송)", "utf-8")
     msg["From"]    = sender
     msg["To"]      = ", ".join(recipients)
+    msg["Message-ID"] = make_msgid(domain="pf-daily.local")
+    msg["X-Entity-Ref-ID"] = make_msgid()  # Gmail 스레드 묶음 방지
 
     alt = MIMEMultipart("alternative")
     plain = (

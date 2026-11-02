@@ -280,11 +280,20 @@ def _box_bond_rates(bonds, rate_history):
   <td style="width:24%;padding:4px 6px;text-align:right;white-space:nowrap;">{chg_s}</td>
 </tr>"""
 
+    # 수집 실패로 직전 값을 쓴 경우 배지·기준일로 명확히 표시
+    fb = [bonds.get(k, {}) for k, _, _ in items if bonds.get(k, {}).get("type") == "fallback"]
+    if fb:
+        d = str(fb[0].get("date") or "")
+        d = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else d
+        src_badge = f"{badge('fallback')} 직전값 {d}"
+    else:
+        src_badge = f"{badge('auto')} ECOS"
+
     return f"""
 <div style="border:1px solid #c7d2fe;border-radius:6px;overflow:hidden;">
   <div style="background:#1e3a8a;padding:7px 10px;display:flex;align-items:center;gap:6px;">
     <span style="font-size:11px;font-weight:800;color:#fff;">A. 채권금리</span>
-    <span style="font-size:9px;color:#a5b4fc;">{badge('auto')} ECOS</span>
+    <span style="font-size:9px;color:#a5b4fc;">{src_badge}</span>
   </div>
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;table-layout:fixed;">
     <tr style="background:#eff6ff;">

@@ -20,7 +20,7 @@ def _warn_if_empty(data):
     bonds = data.get("bonds", {}) or {}
     for key in ("gov_3y", "corp_aa_3y", "cd_91", "base_rate"):
         b = bonds.get(key) or {}
-        if b.get("value") is None:
+        if b.get("value") is None:  # 대체값도 없을 때만
             print(f"::warning title=금리 수집 실패({b.get('label', key)})::{b.get('error', '값 없음')}")
     if not data.get("pf_news") and not data.get("policy_news"):
         print("::warning title=뉴스 수집 0건::NAVER_CLIENT_ID/SECRET 또는 검색 키워드 확인")
